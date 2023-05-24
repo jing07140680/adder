@@ -1,0 +1,78 @@
+import gym
+from gym import spaces
+import numpy as np
+
+
+class DRXEnv(gym.Env):
+    def __init__(self, render_mode=None):
+        self.observation_space = spaces.Box(0, 100, shape=(1,), dtype=int)
+        self.belief = 0
+        self.time = 0
+        self.uplinktime = 15
+        # We have 2 actions
+        self.action_space = spaces.Dict(
+            {
+                'sleep': spaces.Box(0, 60, shape=(1,), dtype=int),
+                'idle': spaces.Box(0, 60, shape=(1,), dtype=int),
+            }
+        )
+
+    def _get_obs(self):
+        return self.belief 
+
+    def reset(self, seed=None, options=None):
+        # We need the following line to seed self.np_random
+        super().reset(seed=seed)
+        self.time = 0
+        self.belief = self.np_random.integers(0, 100, size=1, dtype=int)[0]
+        observation = self._get_obs()
+        return observation
+
+    def delay(self, interval, action):
+        print(interval,action)
+        recv_time = 0
+        #latency = 0
+        while interval>= 0:
+            if interval < action[0]:
+                latency = action[0]-interval
+                recv_time += action[0]
+                break
+            interval = interval - action[0]
+            recv_time += action[0]
+            if interval < action[1]:
+                latency = 0 if interval%2 < 1 else interval%2-1
+                recv_time += interval + latency
+                break
+            recv_time += action[1]
+            interval = interval - action[1]
+            
+        return latency, recv_time
+    
+    def step(self, action, dt=0):
+        downlinktime = int(np.random.uniform(low=0.1, high=100, size=(1,))[0])
+        uplinktime = self.uplinktime
+        latency = 0
+        if action[0] >= uplinktime:
+            action[0] = uplinktime
+            action[1] = 0
+        else:
+            action[1] = min(uplinktime-action[0],action[1])
+
+        if downlinktime < uplinktime:
+            #do not have to consider uplink condition
+            latency,recv_time = self.delay(downlinktime,action)
+        else:
+            latency,recv_time = self.delay(downlinktime%uplinktime,action)
+            recv_time += uplinktime*(downlinktime//uplinktime)
+            
+        self.time = self.time + recv_time
+        self.belief = self.np_random.integers(0, 100, size=1, dtype=int)[0]
+        terminated = 1 if self.time >= 60*24 else 0 
+        reward = latency
+        observation = self._get_obs()
+        return downlinktime, action, latency, self.time
+     
+env = DRXEnv()
+env.reset()
+for i in range(10):
+    print(env.step([5,3]))
