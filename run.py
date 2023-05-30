@@ -18,7 +18,7 @@ for episode in range(10):
     env.reset()
     print("episode:", episode)
     for i in range(100):
-        ob,reward,terminated,_ = env.step([0.9,-0.9])
+        ob,reward,terminated,_ = env.step([-0.9, 0.9, -1])
         print(ob,reward)
         if terminated == 1:
             break

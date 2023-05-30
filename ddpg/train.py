@@ -44,10 +44,10 @@ def test_net(net, env, count=10, device="cpu"):
             #action[1] = 15-action[0]
             #print('state:',obs_v,"act:",action)
             obs, reward, done, _ = env.step(action)
-            act = [0,0]
+            act = [0,0,0]
             act[0] = int(((action[0] - (-1)) / (1 - (-1))) * (new_max - 1) + 1)
             act[1] = int(((action[1] - (-1)) / (1 - (-1))) * (new_max - new_min) + new_min)
-
+            act[2] = int(((action[2] - (-1)) / (1 - (-1))) * (30 - new_min) + new_min)
             print('state:',obs_v,"act:",act,"reward:",reward)
             rewards += reward
             steps += 1
@@ -65,7 +65,7 @@ if __name__ == "__main__":
      
     args = parser.parse_args()
     LEARNING_RATE = args.LEARNING_RATE/1000000
-    LEARNING_RATE_ = args.LEARNING_RATE_/100000000
+    LEARNING_RATE_ = args.LEARNING_RATE_/1000000
     device = torch.device("cuda" if args.cuda else "cpu")
  
     save_path = os.path.join("saves", "ddpg-" + args.name)
@@ -75,7 +75,7 @@ if __name__ == "__main__":
     test_env = gym.make(ENV_ID)
 
     #print(env.observation_space.shape[0])
-
+    print(env.action_space.shape)
     
     act_net = model.DDPGActor(env.observation_space.shape[0], env.action_space.shape[0]).to(device)
     crt_net = model.DDPGCritic(env.observation_space.shape[0], env.action_space.shape[0]).to(device)

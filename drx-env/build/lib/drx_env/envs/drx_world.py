@@ -5,7 +5,8 @@ import random
 new_min = 1
 new_max = 14
 np.random.seed(34)
- 
+SE = 1
+IE = 10
 def trafficpattern():
     # Set mean and standard deviation
     mu, sigma = 0, 1
@@ -21,45 +22,55 @@ def trafficpattern():
     prob_density = freq / (np.sum(freq) * bin_width)
     prob_density = list(np.array(prob_density)*100)
     return prob_density
-     
+      
 
 def binomial_probability(p):
     result = random.random() <= p
     return result
  
 def gentraffic(belief,uplinktime):
-    #has_traffic = binomial_probability(belief)
-    has_traffic = belief
-    downlinktime = int(np.random.uniform(low=1, high=15, size=(1,))[0]) if has_traffic else uplinktime
+    has_traffic = binomial_probability(belief)
+    #has_traffic = belief
+    downlinktime = float(np.random.uniform(low=1, high=15, size=(1,))[0]) if has_traffic else uplinktime
     return downlinktime
      
  
 class DRXEnv(gym.Env):
     def __init__(self, render_mode=None):
 
-        self.observation_space = spaces.Box(0, 100, shape=(2,1), dtype=int)
+        self.observation_space = spaces.Box(0, 100, shape=(2,1), dtype=float)
         #self.observation_space = spaces.Box(0, 100, shape=(2,1), dtype=int)
         #self.observation_space = spaces.Dict({"time": spaces.Box(0, 100, shape=(1,), dtype=int), "downlink": spaces.Discrete(2)})
           
         self.time = 0
         self.uplinktime = 15
-        #self.pattern = trafficpattern()
-        #self.belief = self.pattern[int(self.time//15)]
-        self.belief = int(np.random.uniform(low=0, high=100, size=(1,))[0])
+
+        #for testing
+        self.pattern = trafficpattern()
+        self.belief = self.pattern[int(self.time//15)]
+
+        #for training
+        #self.belief = int(np.random.uniform(low=0, high=100, size=(1,))[0])
+
         self.state = gentraffic(self.belief, self.uplinktime)
-        
+          
         # We have 2 actions
-        self.action_space = spaces.Box(1, 15, shape=(2,1), dtype=int)
-
+        self.action_space = spaces.Box(1, 30, shape=(3,1), dtype=int)
+        #self.action_space = spaces.Tuple((spaces.Box(1, 15, shape=(2,1), dtype=int), spaces.Box(1, 30, shape=(1,),dtype=int)))
     def _get_obs(self):
-        return [self.belief,2] #self.time] 
-
+        return [self.belief, 0.2]# SE, IE] #self.time] 
+ 
     def reset(self, seed=None, options=None): 
         # We need the following line to seed self.np_random
         super().reset(seed=seed)
         self.time = 0
-        #self.belief = self.pattern[int(self.time//15)]
-        self.belief = int(np.random.uniform(low=0, high=100, size=(1,))[0])
+
+        #for testing
+        self.belief = self.pattern[int(self.time//15)]
+
+        #for training
+        #self.belief = int(np.random.uniform(low=0, high=100, size=(1,))[0])
+
         self.state = gentraffic(self.belief,self.uplinktime)
         observation = self._get_obs()
         return observation
@@ -71,20 +82,71 @@ class DRXEnv(gym.Env):
         latency = 0
         if interval == 0:
             return 0, 0, 0
+        
+        if __debug__:
+            print("inter:",interval,"act:",action)
 
-        #print("inter:",interval,"act:",action)
         while interval> 0:
-            #print('sleep:',sleeptime)
-            #print('idle:',idletime)
-            #print("here",interval,action[0],action[1])
             if interval < action[0]:
                 latency = action[0]-interval
                 sleeptime += action[0]
                 recv_time += action[0]
-                break 
+                energy = sleeptime*SE+idletime*IE
+                if __debug__:
+                    print('sleep_t:',sleeptime)
+                    print('idle_t:',idletime)
+                    print('recv_t:',recv_time)
+                    print('latency:',latency)
+                    print("energy:",energy)
+                return latency, energy, recv_time
+            
             sleeptime += action[0]
             interval = interval - action[0]
             recv_time += action[0]
+
+            # start here
+            if interval < action[1]:
+                while interval > 0:
+                    if interval <2*action[2]/60:
+                        if interval < action[2]/60:
+                            latency = 0
+                            recv_time += interval
+                            idletime += 2*interval
+                            energy = sleeptime*SE+idletime*IE
+                            if __debug__:
+                                print('sleep_t:',sleeptime)
+                                print('idle_t:',idletime)
+                                print('recv_t:',recv_time)
+                                print('latency:',latency)
+                                print("energy:",energy)
+                            return latency, energy, recv_time
+                        else:
+                            latency = (2*action[2]/60 - interval)
+                            idletime += 2*action[2]/60
+                            recv_time += 2*action[2]/60
+                            energy = sleeptime*SE+idletime*IE
+                            if __debug__:
+                                print('sleep_t:',sleeptime)
+                                print('idle_t:',idletime)
+                                print('recv_t:',recv_time)
+                                print('latency:',latency)
+                                print("energy:",energy)
+                            return latency, energy, recv_time
+                        
+                    idletime += 2*action[2]/60
+                    interval -= 2*action[2]/60
+                    recv_time += 2*action[2]/60
+
+            else:
+                n = (action[1]*60)//action[2]
+                if n % 2 == 0:
+                    idletime += (n*action[2]+(action[1]*60)%action[2])/60
+                else:
+                    idletime += (n+1)*action[2]/60
+                recv_time += action[1]
+                interval -= action[1]
+                
+            '''
             if interval < action[1]:
                 latency = 0 if interval%2 == 0 else interval%2
                 #print(latency)
@@ -94,33 +156,41 @@ class DRXEnv(gym.Env):
             idletime += action[1]
             recv_time += action[1]
             interval = interval - action[1]
-  
-        #print('sleep_t:',sleeptime)
-        #print('idle_t:',idletime)
-        #print('recv_t:',recv_time)
-        #print('latency:',latency)
-        energy = sleeptime*1+idletime*10
-        #return energy, recv_time
-        #print('energy:',energy)
+            '''
+
+        energy = sleeptime*SE+idletime*IE
+        if __debug__:
+            print('sleep_t:',sleeptime)
+            print('idle_t:',idletime)
+            print('recv_t:',recv_time)
+            print('latency:',latency)
+            print('energy:',energy)
         return latency, energy, recv_time
     
     def step(self, action, dt=0):
-        #print('belief:',self.belief,'downlink:',self.state ,'action:',action)
+        if __debug__:
+            print('belief:',self.belief,'downlink:',self.state ,'action:',action)
         reward = 0
         latency = 0
         energy = 0
 
-        act = [0,0]
-        act[0] = int(((action[0] - (-1)) / (1 - (-1))) * (new_max - 1) + 1)
+        act = [0,0,0]
+        act[0] = int(((action[0] - (-1)) / (1 - (-1))) * (new_max - new_min) + new_min)
         act[1] = int(((action[1] - (-1)) / (1 - (-1))) * (new_max - new_min) + new_min)
-
+        act[2] = int(((action[2] - (-1)) / (1 - (-1))) * (30 - new_min) + new_min)
+        
         #print(action,act)
         uplinktime = self.uplinktime
         downlinktime = self.state
         belief = self.belief
+
         # next_state
-        #self.belief = self.pattern[int(self.time//15)]
+        #for testing
+        self.belief = self.pattern[int(self.time//15)]
+
+        #for training
         self.belief = int(np.random.uniform(low=0, high=100, size=(1,))[0])
+
         observation = self._get_obs()
         self.state = gentraffic(self.belief,uplinktime)
  
@@ -146,21 +216,20 @@ class DRXEnv(gym.Env):
         self.time = self.time + recv_time
         
         terminated = 1 if self.time >= 60*24 else 0  
-
-        if latency > 2:
-            reward = -belief*(latency/recv_time)
+ 
+        if latency > 0.2:
+            reward = -belief*(latency/recv_time)*50
         else:
-            reward = -(100-belief)*(energy/(recv_time*10))
-
+            reward = -(100-belief)*(energy/(recv_time*max(SE,IE)))
+        if __debug__:
+            print("reward:",energy, recv_time*max(SE,IE))
+            
         '''
         if belief > 30:
             reward = -latency/recv_time
         else:
             reward = -energy/(recv_time*10)
         '''
-        
-        #reward =  (100-coeff) * (1-energy/(recv_time*10)) - coeff * latency/recv_time
-        #print("ob:",belief,"act:",act, "reward:",reward)
         '''
         if latency > 2:
             #print(belief)
@@ -169,20 +238,14 @@ class DRXEnv(gym.Env):
             #reward += energy/15*15 #unstable
             reward = (100-belief) * (1-energy/(recv_time*10))
         '''    
-
-        #print(latency,energy,recv_time*10) 
-        #print(reward)
-        #print(latency,terminated)
-        #observation = self._get_obs()
-        #print("state:", downlinktime, "action:",action,"reward:",reward)
-        #print("downlinktime, action, latency, time, terminated,reward",downlinktime, action, latency, self.time,terminated,reward)
-        return observation, reward, terminated, {}
+        return observation, reward, terminated, [latency,energy,recv_time*max(SE,IE)]
+                                                 
 '''
 env = DRXEnv()
 env.reset()
 for i in range(10):
     print(env.step([5,3]))
 ''' 
-   
+    
  
  
