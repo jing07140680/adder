@@ -144,6 +144,7 @@ class AgentDDPG(ptan.agent.BaseAgent):
     def __call__(self, states, agent_states):
         #print(states,agent_states)
         states_v = ptan.agent.float32_preprocessor(states).to(self.device)
+        #print(states_v)
         mu_v = self.net(states_v) #act_net
         actions = mu_v.data.cpu().numpy()
          
