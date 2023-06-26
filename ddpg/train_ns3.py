@@ -30,17 +30,42 @@ import time
 
 GAMMA = 0.9
 BATCH_SIZE = 64
-#LEARNING_RATE = 0.00005
-#LEARNING_RATE_ = 0.000005
-REPLAY_SIZE = 10000
+LEARNING_RATE = 0.00005
+LEARNING_RATE_ = 0.000005
+REPLAY_SIZE = 1000
 REPLAY_INITIAL = 1000
+TEST_ITERS = 1000
 
+def test_net(net, env, count=1, device="cpu"):
+      rewards = 0.0
+      steps = 0
+      for _ in range(count):
+            obs = env.reset()
+            while True:
+                  obs_v = ptan.agent.float32_preprocessor([obs]).to(device)
+                  mu_v = net(obs_v)
+                  action = mu_v.squeeze(dim=0).data.cpu().numpy()
+                  obs, reward, done, info = env.step(action)
+                  act = [0,0,0,0]
+                  act[0] = float(((action[0]-(-1))/(1 - (-1))) * (14 - 1) + 1);
+                  act[1] = float(((action[1]-(-1))/(1 - (-1))) * (14 - 1) + 1);
+                  act[2] = float(((action[2]-(-1))/(1 - (-1))) * (14 - 1) + 1);
+                  act[3] = float(((action[3]-(-1))/(1 - (-1))) * (14 - 1) + 1);
+                  print('state:',obs_v,"act:",act,"reward:",reward,"done:",info, "step:",steps)
+                  rewards += reward
+                  steps += 1
+                  if info=="done":
+                        print("here")
+                        break
+      return rewards / count, steps / count
+
+ 
 def timer(func, *args, **kwargs):
       start = time.time()
       func(*args, **kwargs)
       end = time.time()
       print("time:",end-start)
-
+ 
 def train(arg):
       frame_idx = 0 
       while frame_idx < 10:
@@ -48,14 +73,6 @@ def train(arg):
             arg.populate(1)
             rewards_steps = exp_source.pop_rewards_steps()
              
-GAMMA = 0.9
-BATCH_SIZE = 64
-LEARNING_RATE = 0.00005
-LEARNING_RATE_ = 0.000005
-REPLAY_SIZE = 10000
-REPLAY_INITIAL = 1000
-TEST_ITERS = 1000
-
 parser = argparse.ArgumentParser(description='Start simulation script on/off')
 parser.add_argument("--cuda", default=False, action='store_true', help='Enable CUDA')
 parser.add_argument('--start',
@@ -70,7 +87,7 @@ parser.add_argument('--port',
                     type=int,
                     default=5555,
                     help='Number of iterations, Default: 5555')
-
+ 
 parser.add_argument('--filename',
                     type=str,
                     default="/opt/NB-IoT/test.txt",
@@ -78,7 +95,9 @@ parser.add_argument('--filename',
 
 args = parser.parse_args()
 device = torch.device("cuda" if args.cuda else "cpu")
-    
+save_path = os.path.join("saves", "ddpg1")
+os.makedirs(save_path, exist_ok=True)
+
 startSim = bool(args.start)
 iterationNum = int(args.iterations)
 port = int(args.port)
@@ -105,7 +124,7 @@ print("total trial: ",num_trial)
 '''
 
 env = ns3env.Ns3Env(port=port, stepTime=stepTime, startSim=startSim,
-                    simSeed=seed, simArgs=simArgs, debug=debug)
+      simSeed=seed, simArgs=simArgs, debug=debug)
 print("observation_space",env.observation_space.shape)
 print("action_space",env.action_space.shape)
 
@@ -125,7 +144,7 @@ crt_opt = optim.Adam(crt_net.parameters(), lr=LEARNING_RATE)
 frame_idx = 0
 best_reward = None 
 
-
+ 
 
 with ptan.common.utils.RewardTracker(writer) as tracker:
       with ptan.common.utils.TBMeanTracker(writer, batch_size=10) as tb_tracker:
@@ -171,10 +190,24 @@ with ptan.common.utils.RewardTracker(writer) as tracker:
                   tgt_act_net.alpha_sync(alpha=1 - 0.001)
                   tgt_crt_net.alpha_sync(alpha=1 - 0.001)
 
-                  
-
-
-
+                  print(frame_idx, TEST_ITERS)
+                  if frame_idx % TEST_ITERS == 0:
+                        ts = time.time()
+                        rewards, steps = test_net(act_net, env, device=device) 
+                        print("Test done in %.2f sec, reward %.3f, steps %d" % (time.time() - ts, rewards, steps))
+                        writer.add_scalar("test_reward", rewards, frame_idx) 
+                        writer.add_scalar("test_steps", steps, frame_idx)
+                        print("best_reward: ",best_reward)
+                        if best_reward is None or best_reward < rewards: 
+                              if best_reward is not None:
+                                    print("Best reward updated: %.3f -> %.3f" % (best_reward, rewards))
+                                    name = "best_%+.3f_%d.dat" % (rewards, frame_idx)
+                                    fname = os.path.join(save_path, name)
+                                    torch.save(act_net.state_dict(), fname)
+                                    
+                              best_reward = rewards
+pass
+                        
 '''
 total_episode = 100
 while total_episode:

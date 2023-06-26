@@ -19,7 +19,7 @@ if __name__ == "__main__":
     parser.add_argument("-e", "--env", default=ENV_ID, help="Environment name to use, default=" + ENV_ID)
     parser.add_argument("-r", "--record", help="If specified, sets the recording dir, default=Disabled")
     args = parser.parse_args()
-
+  
     spec = gym.envs.registry.spec(args.env)
     #spec._kwargs['render'] = False
     env = gym.make(args.env)
@@ -28,7 +28,7 @@ if __name__ == "__main__":
  
     net = model.DDPGActor(env.observation_space.shape[0], env.action_space.shape[0])
     net.load_state_dict(torch.load(args.model))
-
+ 
     obs = env.reset()
     total_reward = 0.0
     total_steps = 0
