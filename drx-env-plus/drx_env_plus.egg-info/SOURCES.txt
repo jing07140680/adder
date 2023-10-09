@@ -1,0 +1,6 @@
+setup.py
+drx_env_plus.egg-info/PKG-INFO
+drx_env_plus.egg-info/SOURCES.txt
+drx_env_plus.egg-info/dependency_links.txt
+drx_env_plus.egg-info/requires.txt
+drx_env_plus.egg-info/top_level.txt

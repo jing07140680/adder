@@ -1,0 +1,361 @@
+import gym
+from gym import spaces
+import numpy as np
+import random
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import time
+
+
+
+
+#np.random.seed(34)
+sf = 0  # subframe
+rf = 0  # radio frame
+max_minutes = 15
+max_subframes = max_minutes*60*1000
+#action_to_po = {0: 4, 1: 9}
+max_delay = 2000
+
+# Energy usage, the unit is j/subframe (to fix!!!)
+CE = 100  # energy consumed when fully connected
+IE = 50  # energy consumed when connected in edrx idle
+BE = 20  # Basic energy consumed when released in edrx idle
+SE = 10  # Sleep energy
+TEST = False
+TRAIN = True
+
+
+
+
+def trafficpattern():
+    # Set mean and standard deviation
+    mu, sigma = 0, 1
+
+    # Generate random data from Gaussian distribution
+    data = np.random.normal(mu, sigma, 1000)
+
+    # Compute histogram bins and frequencies
+    n_bins = 96
+    freq, bins = np.histogram(data, bins=n_bins)
+    # Compute bin width and normalize frequency values
+    bin_width = bins[1] - bins[0]
+    prob_density = freq / (np.sum(freq) * bin_width)
+    prob_density = list(np.array(prob_density)*100)
+    return prob_density
+
+  
+def binomial_probability(p):
+    result = random.random() <= p
+    return result
+
+
+# Use belief to generate uplink traffic, if there is 0 uplink traffic,
+# then uplink traffic will happen for GPS location update set to 15 min.
+def gentraffic(belief, T_u):
+    has_traffic = binomial_probability(belief)
+    T_d = np.random.randint(1, max_subframes, 1)[0] if has_traffic else T_u
+    return T_d
+
+
+class DRXEnv(gym.Env):
+    TEST = False
+    TRAIN = True
+    fig = make_subplots(rows=1, cols=1)
+    x = []
+    y = []
+    def __init__(self, render_mode=None, debug=False, timelineplot=False):
+        self.debug = debug
+        self.timelineplot = timelineplot
+
+        
+        ########################## Observation ###############################
+        # observation: 1. belif value 2. expected maximum latency
+        self.observation_space = spaces.Box(0, 100, shape=(3, 1), dtype=float)
+        # initial time
+        self.time = 0
+        # there is at least an uplink traffic each max_subframes
+        self.uplinktime = max_subframes
+        # for testing 
+        if TEST: 
+            self.pattern = trafficpattern()
+            self.belief = self.pattern[int(self.time//max_subframes)]
+        # for training
+        if TRAIN:
+            self.belief = int(np.random.uniform(low=0, high=100, size=(1,))[0])
+        self.state = gentraffic(self.belief, self.uplinktime)
+
+        ########################## Action  #################################
+        self.action_space = spaces.Box(-1, 1, shape=(4,1), dtype=float)
+        '''
+        self.action_space = spaces.Dict( 
+            { 
+                "rrc_release": spaces.Box(low=0, high=max_subframes, shape=(1,), dtype=int),
+                "T3324": spaces.Box(low=0, high=max_subframes, shape=(1,), dtype=int),
+                "edrx_cycle": spaces.Box(low=0, high=max_subframes, shape=(1,), dtype=int),
+                #"PO": spaces.Discrete(2),
+                "PSM": spaces.Box(low=0, high=max_subframes, shape=(1,), dtype=int),
+            }
+        )
+        '''
+    def _get_obs(self):
+        global rf
+        return [self.belief, rf, max_delay]
+
+    def reset(self, seed=None, options=None):
+        # We need the following line to seed self.np_random
+        # super().reset(seed=seed)
+        self.time = 0
+        global sf
+        global rf
+        sf = 0
+        rf = 0
+        
+        if TEST:
+            self.belief = self.pattern[int(self.time//max_subframes)]
+        if TRAIN:
+            self.belief = int(np.random.uniform(low=0, high=100, size=(1,))[0])
+
+        self.state = gentraffic(self.belief, self.uplinktime)
+        observation = self._get_obs()
+        return observation
+
+    # return: latency, energy, recv_time
+    # note: recv_time != T_d
+    # PSM = T3412-T3324
+
+    def simulator(self, T_d, act):
+        rrc_release, T3324, edrx_cycle, PSM = act
+        PO = 4
+        T3412 = T3324+PSM
+        Cycle = T3412+edrx_cycle
+        PF = 0
+        energy = 0
+        global sf
+        global rf
+        nofcycle = T_d // (rrc_release+T3412)
+        offset  = T_d % (rrc_release+T3412)
+        tmp_nofcycle = nofcycle
+        fig = self.fig
+        cnt = 0
+        while tmp_nofcycle:
+            cur_time = 0
+            if self.timelineplot:
+                self.x.append(cur_time+cnt*(rrc_release+T3412))
+                self.y.append(CE)
+            energy += rrc_release*CE
+            rf = (rf + rrc_release // 10 + (sf+ rrc_release % 10) // 10) % 1024
+            sf = (sf + rrc_release) % 10
+            cur_time = rrc_release
+            if self.timelineplot:
+                self.x.append(cur_time+cnt*(rrc_release+T3412))
+                self.y.append(CE)
+            while cur_time < rrc_release + T3324:
+                if rf == PF and sf == PO:
+                    PF = (PF + edrx_cycle) % 1024
+                    energy += IE
+                    if self.timelineplot:
+                        self.x.append(cur_time+cnt*(rrc_release+T3412))
+                        self.y.append(IE)
+                else:
+                    energy += BE 
+                    if self.timelineplot:
+                        self.x.append(cur_time+cnt*(rrc_release+T3412))
+                        self.y.append(BE)
+                # update time
+                cur_time += 1
+                sf = (sf+1) % 10
+                if sf == 0:
+                    rf = (rf+1) % 1024
+            if self.timelineplot:
+                self.x.append(cur_time+cnt*(rrc_release+T3412))
+                self.y.append(SE)
+                    
+            energy += PSM*SE
+            cur_time += PSM
+            if self.timelineplot:
+                self.x.append(cur_time+cnt*(rrc_release+T3412))
+                self.y.append(SE)
+            rf = (rf + PSM // 10 + (sf+ PSM % 10) // 10) % 1024
+            sf = (sf + PSM) % 10
+            tmp_nofcycle -= 1
+            cnt += 1
+            
+        cur_time = 0
+        recv_time = 0
+        triggered = 0
+        connected = 0
+        while not recv_time:
+            if cur_time == offset:
+                triggered = 1
+
+            tmp_time = cur_time % (T3412+rrc_release)
+            if tmp_time < rrc_release:
+                connected = 1
+                energy += CE
+                if self.timelineplot:
+                    self.x.append(cur_time+nofcycle*(rrc_release+T3412))
+                    self.y.append(CE)
+            if rrc_release <= tmp_time < rrc_release + T3324: 
+                if rf == PF and sf == PO:
+                    PF = (PF + edrx_cycle) % 1024
+                    connected = 1 
+                    energy += IE
+                    if self.timelineplot:
+                        self.x.append(cur_time+nofcycle*(rrc_release+T3412))
+                        self.y.append(IE)
+                else:
+                    connected = 0
+                    energy += BE
+                    if self.timelineplot:
+                        self.x.append(cur_time+nofcycle*(rrc_release+T3412))
+                        self.y.append(BE)
+            if rrc_release + T3324 <= tmp_time < rrc_release + T3324 + PSM:
+                connected = 0
+                energy += SE
+                if self.timelineplot:
+                    self.x.append(cur_time+nofcycle*(rrc_release+T3412))
+                    self.y.append(SE)
+            # print(T_d, cur_time, tmp_time, connected, triggered)
+            # record the time when UE received downlink traffic
+            if triggered and connected:
+                recv_time = cur_time + (rrc_release+T3412)*nofcycle
+                #print("!!!", cur_time, (rrc_release+T3412)*nofcycle, nofcycle)
+                break
+ 
+            # update time
+            cur_time += 1 
+            sf = (sf+1) % 10
+            if sf == 0:
+                rf = (rf+1) % 1024
+        
+        latency = recv_time - T_d
+
+        if self.debug:
+            print('T_d:', T_d)
+            print('recv_t:', recv_time)
+            print('latency:', latency)
+            print('energy:', energy)
+ 
+        if self.timelineplot:
+            self.fig.update_xaxes(range=[0, 900000])
+            self.fig.update_layout(
+                title='LTE-M DRX Energy and Traffic monitor per 15 mintues',  # Set the main plot title
+                title_x=0.5,  # Set the x-position of the main title (0.5 centers the title)
+            )
+            # Set axis titles
+            self.fig.update_xaxes(title_text='Time (subframes)')  # Set the title of the x-axis
+            self.fig.update_yaxes(title_text='Energy')  # Set the title of the y-axis
+            
+            self.fig.add_scatter(x=self.x, y=self.y, )
+            #self.fig.add_scatter(x=[T_d, T_d], y=[0,100], line=dict(color="crimson",width=1))
+            # Add arrow annotation
+            self.fig.add_annotation(
+                    x=T_d,  # x-coordinate of the arrow's head
+                    y=0,  # y-coordinate of the arrow's head
+                    ax=0,  # x-coordinate of the arrow's tail
+                    ay=-200,  # y-coordinate of the arrow's tail
+                    xref='x',  # sets the x-coordinate system for x and ax (can be 'x', 'x domain', etc.)
+                    yref='y',  # sets the y-coordinate system for y and ay (can be 'y', 'y domain', etc.)
+                    arrowhead=2,  # size of the arrow head
+                    arrowsize=1,  # scale factor for the size of the arrow
+                    arrowwidth=2,  # width of the arrow line in pixels
+                    arrowcolor='red',  # color of the arrow
+                    text="DL traffic arrives at eNB"
+                )
+
+            self.fig.add_annotation(
+                x=recv_time,  # x-coordinate of the arrow's head
+                y=0,  # y-coordinate of the arrow's head
+                ax=0,  # x-coordinate of the arrow's tail
+                ay=-500,  # y-coordinate of the arrow's tail
+                xref='x',  # sets the x-coordinate system for x and ax (can be 'x', 'x domain', etc.)
+                yref='y',  # sets the y-coordinate system for y and ay (can be 'y', 'y domain', etc.)
+                arrowhead=2,  # size of the arrow head
+                arrowsize=1,  # scale factor for the size of the arrow
+                arrowwidth=2,  # width of the arrow line in pixels
+                arrowcolor='green',  # color of the arrow
+                text='DL traffic received by UE'
+            )
+            
+            self.fig.show()
+            print("timelineplot")
+
+        return latency, energy, recv_time
+        
+    def step(self, action, dt=0):
+        global sf
+        global rf
+        if self.debug: 
+            #print('belief:', self.belief, 'downlink:',
+            #      self.state, 'action:', action)
+            print('T_d:', self.state)
+            #print('rf:', rf)
+            print('action:', action)
+        reward = 0
+        latency = 0
+        energy = 0
+       
+        ############################################ Prepare observation ##################################################
+        T_u = self.uplinktime
+        T_d = self.state
+        belief = self.belief
+ 
+        if TEST:
+            self.belief = self.pattern[int(self.time//max_subframes)]
+
+        if TRAIN:
+            self.belief = np.random.randint(0, 100, 1)[0] 
+
+        observation=self._get_obs()
+        self.state=gentraffic(self.belief, T_u)
+        
+        print("step action:",action)
+        ############################## Apply Mask and Constraint Enforcement to the action space ############################# 
+        act=[0]*4
+        act[0]=int(((action[0] - (-1)) / (1 - (-1))) * 29999 + 1)  #action['rrc_release']
+        act[1]=int(((action[1] - (-1)) / (1 - (-1))) * max_subframes)  #action['T3324']
+        act[2]=int(((action[2] - (-1)) / (1 - (-1))) * max_subframes) #action['edrx_cycle']
+        #act[3]=action['PO']
+        act[3]=int(((action[3] - (-1)) / (1 - (-1))) * max_subframes)  #action['PSM']
+
+        # set constraint for each timer:
+        res_time=T_u
+        res_time=T_u-act[0]
+        act[1]=min(res_time, act[1])
+        res_time -= act[1]
+        act[3]=min(res_time, act[3])
+        act[2]=min(act[1], act[2])
+        #act[3]=action_to_po[act[3]]
+        #print("coverted action:",act)
+        #print("observation",observation)
+        ########################################### Reward Function ###################################################
+        # simulate the episode
+       
+        latency, energy, recv_time=self.simulator(T_d, act)
+        self.time=self.time + recv_time
+        #print("time:", self.time)
+        terminated=1 if self.time >= 86400000 else 0
+        #terminated=1 if self.time >= max_subframes*4 else 0
+  
+        if latency > max_delay:
+            #reward=-belief*(latency/recv_time)*50 
+            reward=-belief*(latency/max_subframes)*400
+        else:  
+            reward=-(100-belief)*(energy/((recv_time+1)*CE))
+
+        if self.debug:
+            print("reward: ", reward) 
+            print("used energy:", energy, "w/o idle and PSM:", (recv_time+1)*CE)
+        #if terminated == 1:
+            #print("terminated")
+        return observation, reward, terminated, [latency, energy, (recv_time+1)*CE]
+
+''' 
+env = DRXEnv()
+env.reset()
+for i in range(10):
+    print(env.step([5,3]))
+'''
+  
+  
