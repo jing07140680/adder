@@ -5,8 +5,7 @@ import random
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
-
-
+import copy
 
 
 #np.random.seed(34)
@@ -15,20 +14,19 @@ rf = 0  # radio frame
 max_minutes = 15
 max_subframes = max_minutes*60*1000
 #action_to_po = {0: 4, 1: 9}
-max_delay = 2000
+max_delay = 20000
 
-# Energy usage, the unit is j/subframe (to fix!!!)
-CE = 100  # energy consumed when fully connected
-IE = 50  # energy consumed when connected in edrx idle
-BE = 20  # Basic energy consumed when released in edrx idle
-SE = 10  # Sleep energy
-TEST = False
-TRAIN = True
+ 
+# energy consumption here use average current
+# Energy usage, the unit is uA(current)(to fix!!!)
+CE = 35000 # energy consumed when fully connected
+IE = 2620  # energy consumed when connected in edrx idle
+BE = 5  # Basic energy consumed when released in edrx idle
+SE = 2.7  # Sleep energy
 
-
-
-
-def trafficpattern():
+ 
+def trafficpattern( pattern = 1, steps = 30):
+    ''' 
     # Set mean and standard deviation
     mu, sigma = 0, 1
 
@@ -37,71 +35,107 @@ def trafficpattern():
 
     # Compute histogram bins and frequencies
     n_bins = 96
-    freq, bins = np.histogram(data, bins=n_bins)
+    freq, bins = np.histogram(data, bins=n_bins) 
     # Compute bin width and normalize frequency values
     bin_width = bins[1] - bins[0]
     prob_density = freq / (np.sum(freq) * bin_width)
     prob_density = list(np.array(prob_density)*100)
+    #print("trafficpattern:",prob_density)
     return prob_density
+    '''
+    np.random.seed(0)
+    traffic = [random.randint(0, 100) for _ in range(steps)]
+    return traffic
 
+
+    
   
 def binomial_probability(p):
     result = random.random() <= p
     return result
-
-
+ 
+    
 # Use belief to generate uplink traffic, if there is 0 uplink traffic,
 # then uplink traffic will happen for GPS location update set to 15 min.
 def gentraffic(belief, T_u):
-    has_traffic = binomial_probability(belief)
+    has_traffic = binomial_probability(belief/100)
     T_d = np.random.randint(1, max_subframes, 1)[0] if has_traffic else T_u
-    return T_d
-
-
+    #if belief < 80:
+    #    T_d = T_u
+    #else:
+    #    T_d = np.random.randint(1, max_subframes, 1)[0]
+    return T_d    
+'''
+def genfixed():
+    num_columns = 20
+    num_rows = 20
+    matrix = np.zeros((num_rows, num_columns))
+    for i in range(num_columns):
+        matrix[:, i] = (np.random.rand(num_rows) < self.pattern[i]/100).astype(int)
+    matrix[matrix == 0] = 300000
+    matrix[matrix == 1] = 900000
+    return matrix
+'''
+# periodic traffic
+def genperiodic(): 
+    return 300000
+ 
 class DRXEnv(gym.Env):
-    TEST = False
-    TRAIN = True
+
     fig = make_subplots(rows=1, cols=1)
     x = []
     y = []
-    def __init__(self, render_mode=None, debug=False, timelineplot=False):
-        self.debug = debug
-        self.timelineplot = timelineplot
 
-        
+    def _set_obs(self):
+        # Train mode: random
+        if self.test == 0:
+            #print("TEST mode")
+            #self.pattern = trafficpattern()
+            #self.belief = self.pattern[int(self.time//max_subframes)]
+            self.belief = np.random.uniform(low=0, high=100, size=(1,))[0]
+            self.state = gentraffic(self.belief, self.uplinktime)
+             
+        # test mode: fixed random 
+        elif self.test == 1:
+            self.belief = self.tmppattern.pop(0)
+            #self.state = self.tmpavl.pop(0)
+            self.state = gentraffic(self.belief, self.uplinktime)
+
+        # mode: periodic
+        elif self.test == 2:
+            self.belief = 100
+            self.state = genperiodic()
+ 
+            
+    def _get_obs(self):
+        global rf
+        return [20, self.belief]#, (rf%1024)/10]
+                           
+    def __init__(self, render_mode=None, debug=False, timelineplot=False, test=0, belief = 0):
+        self.debug = debug 
+        self.timelineplot = timelineplot
+        self.test = test
+          
         ########################## Observation ###############################
         # observation: 1. belif value 2. expected maximum latency
-        self.observation_space = spaces.Box(0, 100, shape=(3, 1), dtype=float)
+        self.observation_space = spaces.Box(0, 100, shape=(2, 1), dtype=float)
         # initial time
         self.time = 0
         # there is at least an uplink traffic each max_subframes
         self.uplinktime = max_subframes
-        # for testing 
-        if TEST: 
-            self.pattern = trafficpattern()
-            self.belief = self.pattern[int(self.time//max_subframes)]
-        # for training
-        if TRAIN:
-            self.belief = int(np.random.uniform(low=0, high=100, size=(1,))[0])
-        self.state = gentraffic(self.belief, self.uplinktime)
-
+ 
+        if self.test == 1:
+            self.pattern = trafficpattern(pattern = 1, steps = 30)
+            self.tmppattern = copy.deepcopy(self.pattern)
+            print(self.pattern)
+ 
+               
+        self._set_obs()
+        #print("init:", self.belief, self.state)        
         ########################## Action  #################################
         self.action_space = spaces.Box(-1, 1, shape=(4,1), dtype=float)
-        '''
-        self.action_space = spaces.Dict( 
-            { 
-                "rrc_release": spaces.Box(low=0, high=max_subframes, shape=(1,), dtype=int),
-                "T3324": spaces.Box(low=0, high=max_subframes, shape=(1,), dtype=int),
-                "edrx_cycle": spaces.Box(low=0, high=max_subframes, shape=(1,), dtype=int),
-                #"PO": spaces.Discrete(2),
-                "PSM": spaces.Box(low=0, high=max_subframes, shape=(1,), dtype=int),
-            }
-        )
-        '''
-    def _get_obs(self):
-        global rf
-        return [self.belief, rf, max_delay]
-
+     
+   
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
         # super().reset(seed=seed)
@@ -110,16 +144,12 @@ class DRXEnv(gym.Env):
         global rf
         sf = 0
         rf = 0
-        
-        if TEST:
-            self.belief = self.pattern[int(self.time//max_subframes)]
-        if TRAIN:
-            self.belief = int(np.random.uniform(low=0, high=100, size=(1,))[0])
-
-        self.state = gentraffic(self.belief, self.uplinktime)
+        if self.test == 1:
+            self.tmppattern = copy.deepcopy(self.pattern)
+        self._set_obs() 
         observation = self._get_obs()
         return observation
-
+ 
     # return: latency, energy, recv_time
     # note: recv_time != T_d
     # PSM = T3412-T3324
@@ -130,7 +160,6 @@ class DRXEnv(gym.Env):
         T3412 = T3324+PSM
         Cycle = T3412+edrx_cycle
         PF = 0
-        energy = 0
         global sf
         global rf
         nofcycle = T_d // (rrc_release+T3412)
@@ -138,46 +167,53 @@ class DRXEnv(gym.Env):
         tmp_nofcycle = nofcycle
         fig = self.fig
         cnt = 0
-        while tmp_nofcycle:
-            cur_time = 0
+
+        
+        def tplot(powLevel):
             if self.timelineplot:
                 self.x.append(cur_time+cnt*(rrc_release+T3412))
-                self.y.append(CE)
+                self.y.append(powLevel)
+ 
+        energy = 0
+        
+        while tmp_nofcycle:
+            
+            ############ rrc_connected ##############
+            cur_time = 0
+            tplot(CE)
             energy += rrc_release*CE
             rf = (rf + rrc_release // 10 + (sf+ rrc_release % 10) // 10) % 1024
             sf = (sf + rrc_release) % 10
             cur_time = rrc_release
-            if self.timelineplot:
-                self.x.append(cur_time+cnt*(rrc_release+T3412))
-                self.y.append(CE)
+            tplot(CE)
+
+            ############ rrc_idle #############
+            flag = 0
             while cur_time < rrc_release + T3324:
                 if rf == PF and sf == PO:
-                    PF = (PF + edrx_cycle) % 1024
+                    flag = 1
+                    PF = PF + edrx_cycle
                     energy += IE
-                    if self.timelineplot:
-                        self.x.append(cur_time+cnt*(rrc_release+T3412))
-                        self.y.append(IE)
+                    tplot(IE)
                 else:
-                    energy += BE 
-                    if self.timelineplot:
-                        self.x.append(cur_time+cnt*(rrc_release+T3412))
-                        self.y.append(BE)
+                    energy += BE
+                    tplot(BE)
+
                 # update time
                 cur_time += 1
                 sf = (sf+1) % 10
                 if sf == 0:
-                    rf = (rf+1) % 1024
-            if self.timelineplot:
-                self.x.append(cur_time+cnt*(rrc_release+T3412))
-                self.y.append(SE)
-                    
+                    if flag:
+                        rf += 1
+                    else:
+                        rf = (rf+1) % 1024
+            tplot(SE) 
             energy += PSM*SE
             cur_time += PSM
-            if self.timelineplot:
-                self.x.append(cur_time+cnt*(rrc_release+T3412))
-                self.y.append(SE)
+            rf = rf % 1024
             rf = (rf + PSM // 10 + (sf+ PSM % 10) // 10) % 1024
             sf = (sf + PSM) % 10
+            tplot(SE)
             tmp_nofcycle -= 1
             cnt += 1
             
@@ -185,6 +221,8 @@ class DRXEnv(gym.Env):
         recv_time = 0
         triggered = 0
         connected = 0
+        flag = 0
+        PF = 0
         while not recv_time:
             if cur_time == offset:
                 triggered = 1
@@ -193,45 +231,50 @@ class DRXEnv(gym.Env):
             if tmp_time < rrc_release:
                 connected = 1
                 energy += CE
-                if self.timelineplot:
-                    self.x.append(cur_time+nofcycle*(rrc_release+T3412))
-                    self.y.append(CE)
+                tplot(CE)
+
             if rrc_release <= tmp_time < rrc_release + T3324: 
                 if rf == PF and sf == PO:
-                    PF = (PF + edrx_cycle) % 1024
+                    flag = 1
+                    PF = PF + edrx_cycle
                     connected = 1 
                     energy += IE
-                    if self.timelineplot:
-                        self.x.append(cur_time+nofcycle*(rrc_release+T3412))
-                        self.y.append(IE)
+                    tplot(IE)
                 else:
                     connected = 0
                     energy += BE
-                    if self.timelineplot:
-                        self.x.append(cur_time+nofcycle*(rrc_release+T3412))
-                        self.y.append(BE)
+                    tplot(BE)
+  
             if rrc_release + T3324 <= tmp_time < rrc_release + T3324 + PSM:
+                rf = rf % 1024
                 connected = 0
                 energy += SE
-                if self.timelineplot:
-                    self.x.append(cur_time+nofcycle*(rrc_release+T3412))
-                    self.y.append(SE)
+                tplot(SE)
+
+
             # print(T_d, cur_time, tmp_time, connected, triggered)
-            # record the time when UE received downlink traffic
+            # record the time when UE received downlink traffic 
             if triggered and connected:
                 recv_time = cur_time + (rrc_release+T3412)*nofcycle
                 #print("!!!", cur_time, (rrc_release+T3412)*nofcycle, nofcycle)
+                break
+
+            if triggered and cur_time + (rrc_release+T3412)*nofcycle ==900000:
+                recv_time = 900000
                 break
  
             # update time
             cur_time += 1 
             sf = (sf+1) % 10
             if sf == 0:
-                rf = (rf+1) % 1024
-        
+                if flag == 0:
+                    rf = (rf+1) % 1024
+                else:
+                    rf += 1
+                    
         latency = recv_time - T_d
 
-        if self.debug:
+        if self.debug: 
             print('T_d:', T_d)
             print('recv_t:', recv_time)
             print('latency:', latency)
@@ -282,80 +325,85 @@ class DRXEnv(gym.Env):
             print("timelineplot")
 
         return latency, energy, recv_time
-        
-    def step(self, action, dt=0):
+
+    
+    def fillin(self, obs):
+        global rf 
+        self.belief = obs[1]
+        self.state = gentraffic(self.belief,self.uplinktime)
+        #rf = obs[2]
+        #print(self.belief,self.state)
+     
+         
+    def step(self, action):
         global sf
         global rf
-        if self.debug: 
-            #print('belief:', self.belief, 'downlink:',
-            #      self.state, 'action:', action)
-            print('T_d:', self.state)
-            #print('rf:', rf)
-            print('action:', action)
         reward = 0
         latency = 0
-        energy = 0
-       
+        energy = 0 
+         
         ############################################ Prepare observation ##################################################
+
+        # current state and
         T_u = self.uplinktime
         T_d = self.state
         belief = self.belief
- 
-        if TEST:
-            self.belief = self.pattern[int(self.time//max_subframes)]
-
-        if TRAIN:
-            self.belief = np.random.randint(0, 100, 1)[0] 
-
-        observation=self._get_obs()
-        self.state=gentraffic(self.belief, T_u)
         
-        print("step action:",action)
-        ############################## Apply Mask and Constraint Enforcement to the action space ############################# 
+        ############### Apply Mask and Constraint Enforcement to the action space ###################### 
+        #print(action)
         act=[0]*4
         act[0]=int(((action[0] - (-1)) / (1 - (-1))) * 29999 + 1)  #action['rrc_release']
-        act[1]=int(((action[1] - (-1)) / (1 - (-1))) * max_subframes)  #action['T3324']
-        act[2]=int(((action[2] - (-1)) / (1 - (-1))) * max_subframes) #action['edrx_cycle']
+        act[1]=int(((action[1] - (-1)) / (1 - (-1))) * (max_subframes-10)+10)  #action['T3324']
+        act[2]=int(((action[2] - (-1)) / (1 - (-1))) * (max_subframes/10-1)+1) #action['edrx_cycle'] 
         #act[3]=action['PO']
-        act[3]=int(((action[3] - (-1)) / (1 - (-1))) * max_subframes)  #action['PSM']
-
+        act[3]=int(((action[3] - (-1)) / (1 - (-1))) * (max_subframes))  #action['PSM'] 
+  
+        # print(act)
         # set constraint for each timer:
         res_time=T_u
         res_time=T_u-act[0]
         act[1]=min(res_time, act[1])
         res_time -= act[1]
         act[3]=min(res_time, act[3])
-        act[2]=min(act[1], act[2])
+        act[2]=min(act[1]//10, act[2])
         #act[3]=action_to_po[act[3]]
         #print("coverted action:",act)
-        #print("observation",observation)
+
+  
         ########################################### Reward Function ###################################################
-        # simulate the episode
-       
-        latency, energy, recv_time=self.simulator(T_d, act)
+        # simulate the episode 
+         
+        latency, energy, recv_time = self.simulator(T_d, act) 
         self.time=self.time + recv_time
         #print("time:", self.time)
-        terminated=1 if self.time >= 86400000 else 0
-        #terminated=1 if self.time >= max_subframes*4 else 0
-  
+        terminated=1 if self.time >= 85500000 else 0 
+        #terminated=1 if self.time >= max_subframes*20 else 0
+        nofawake = int(recv_time/max_delay)
+        standard = nofawake*IE+(recv_time-nofawake)*BE+CE
+        
         if latency > max_delay:
             #reward=-belief*(latency/recv_time)*50 
-            reward=-belief*(latency/max_subframes)*400
-        else:  
-            reward=-(100-belief)*(energy/((recv_time+1)*CE))
-
-        if self.debug:
+            reward= 0.5*(-(1-max_delay/latency)-1) 
+        else:        
+            #reward=-(100-belief)*(energy/((recv_time+1)*CE))
+            if energy > standard:
+                #reward = -(100-belief)*(1-standard/energy)/100
+                reward = -0.5*(1-standard/energy) 
+            else: 
+                #reward = (100-belief)*(1-(energy/standard))/100
+                reward = 1-energy/standard
+            #reward = pow(reward,19)              
+        if self.debug: 
             print("reward: ", reward) 
-            print("used energy:", energy, "w/o idle and PSM:", (recv_time+1)*CE)
-        #if terminated == 1:
-            #print("terminated")
-        return observation, reward, terminated, [latency, energy, (recv_time+1)*CE]
+            print("used energy:", energy, "w/o idle and PSM:", (recv_time+1)*CE) 
+        self._set_obs()
+        observation = self._get_obs()
+        #print(observation)
+        return observation, reward, terminated, [self.time,latency,energy,standard,T_d]
+ 
+ 
+ 
 
-''' 
-env = DRXEnv()
-env.reset()
-for i in range(10):
-    print(env.step([5,3]))
-'''
-  
-  
+
+ 
+ 
