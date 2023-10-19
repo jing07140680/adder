@@ -39,12 +39,12 @@ class DDPGActor(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(obs_size, 64),
             nn.LeakyReLU(),
-            nn.Linear(64, 10),
+            nn.Linear(64, 32),
             nn.LeakyReLU(),
-            nn.Linear(10, act_size),
+            nn.Linear(32, act_size),
             nn.Tanh()
             #nn.ReLU(),
-            #nn.Linear(300, 1)
+            #nn.Linear(300, 1) 
         ) 
  
     def forward(self, x):
@@ -66,9 +66,9 @@ class DDPGCritic(nn.Module):
             nn.Linear(64 + act_size, 128),
             #nn.Linear(act_size, 300),
             nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Linear(128, 32),
             nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Linear(32, 1)
         ) 
 
     def forward(self, x, a):
@@ -123,11 +123,13 @@ class AgentA2C(ptan.agent.BaseAgent):
         return actions, agent_states
 
 
+    
+'''
 class AgentDDPG(ptan.agent.BaseAgent):
     """
     Agent implementing Orstein-Uhlenbeck exploration process
     """ 
-    def __init__(self, net, device="cpu", ou_enabled=True, ou_mu=0.0, ou_teta=0.15, ou_sigma=0.2, ou_epsilon=1.0):
+    def __init__(self, net, device="cpu", ou_enabled=True, ou_mu=1, ou_teta=0.5, ou_sigma=0.9, ou_epsilon=1.0):
         self.net = net
         self.device = device
         self.ou_enabled = ou_enabled
@@ -138,12 +140,13 @@ class AgentDDPG(ptan.agent.BaseAgent):
   
     def initial_state(self):
         return None
- 
+  
     def __call__(self, states, agent_states):
-        #print(states,agent_states) #agent_states == None?
-        states_v = ptan.agent.float32_preprocessor(states).to(self.device) #covert[[states]] to tensor([[]])
+        print(states,agent_states) #agent_states == None?
+        states_v = ptan.agent.float32_preprocessor(states).to(self.device) #covert[[states]] to tensor([[]]) 
         #print(states_v) 
         mu_v = self.net(states_v) #act_net
+        print("mu_v:",mu_v)
         actions = mu_v.data.cpu().numpy()
         
         if self.ou_enabled and self.ou_epsilon > 0:
@@ -160,9 +163,29 @@ class AgentDDPG(ptan.agent.BaseAgent):
             new_a_states = agent_states
 
         actions = np.clip(actions, -1, 1)
+        print("actions:",actions)
         return actions, new_a_states
- 
-  
+'''
+
+class AgentDDPG(ptan.agent.BaseAgent):
+    """
+    Agent implementing noisy agent
+    """
+    def __init__(self, net, device="cpu", epsilon=1):
+        self.net = net
+        self.device = device
+        self.epsilon = epsilon
+        
+    def __call__(self, states, agent_states):
+        states_v = ptan.agent.float32_preprocessor(states).to(self.device)
+        mu_v = self.net(states_v)
+        print(states_v[0][1] ,"mu_v:",mu_v)
+        actions = mu_v.data.cpu().numpy()
+        actions += self.epsilon * np.random.uniform(low=-2, high=2,size=actions.shape)#np.random.normal(size=actions.shape)
+        actions = np.clip(actions, -1, 1)
+        #print("act:",actions)
+        return actions, agent_states
+                                                                                             
 class AgentD4PG(ptan.agent.BaseAgent):
     """
     Agent implementing noisy agent
@@ -179,3 +202,4 @@ class AgentD4PG(ptan.agent.BaseAgent):
         actions += self.epsilon * np.random.normal(size=actions.shape)
         actions = np.clip(actions, -1, 1)
         return actions, agent_states
+ 

@@ -7,22 +7,32 @@ import argparse
 import time
 
 ENV_ID = "Drx-v1"
-t1 = 0.5
-t2 = -0.8
-t3 = -0.9
-t4 = -0.9
+t1 = -1
+t2 = -1
+t3 = -1
+t4 = -1
+test = 0
 
 ###################### SIMUTLATOR TEST ########################
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    env = gym.make(ENV_ID, debug=True, timelineplot=True)
     parser.add_argument("-t1","--t1", default=0.5, help='rrc release')
     parser.add_argument("-t2","--t2", default=0.2, help='T3324')
     parser.add_argument("-t3","--t3", default=-0.2,  help='edrx_cycle')
     parser.add_argument("-t4","--t4", default=0.1, help='PSM')
+    parser.add_argument("-T","--test", default=1, type = int, help='Enable test mode')
+    parser.add_argument("-B","--belief",default=0, help='test belief')
     args = parser.parse_args()
-    #env.reset()
+    t1 = float(args.t1)
+    t2 = float(args.t2)
+    t3 = float(args.t3)
+    t4 = float(args.t4)
+    test = args.test
+    belief = float(args.belief)
+    print(t1,t2,t3,t4,test,belief)
+    env = gym.make(ENV_ID, debug=True, timelineplot=False, test=test, belief = belief)
+    env.reset()
     ob,reward,terminated,_ = env.step([t1,t2,t3,t4])
     print(ob,reward)
 
