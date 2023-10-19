@@ -7,6 +7,7 @@ new_max = 14
 np.random.seed(34)
 SE = 1
 IE = 10
+
 def trafficpattern():
     # Set mean and standard deviation
     mu, sigma = 0, 1
@@ -24,10 +25,14 @@ def trafficpattern():
     return prob_density
       
 
+
 def binomial_probability(p):
     result = random.random() <= p
     return result
- 
+
+
+# Use belief to generate uplink traffic, if there is 0 uplink traffic,
+# then uplink traffic will happen for GPS location update set to 15 min. 
 def gentraffic(belief,uplinktime):
     has_traffic = binomial_probability(belief)
     #has_traffic = belief
@@ -54,9 +59,10 @@ class DRXEnv(gym.Env):
 
         self.state = gentraffic(self.belief, self.uplinktime)
           
-        # We have 2 actions
+        # We have 3 actions
         self.action_space = spaces.Box(1, 30, shape=(3,1), dtype=int)
         #self.action_space = spaces.Tuple((spaces.Box(1, 15, shape=(2,1), dtype=int), spaces.Box(1, 30, shape=(1,),dtype=int)))
+
     def _get_obs(self):
         return [self.belief, 0.2]# SE, IE] #self.time] 
  
@@ -72,7 +78,7 @@ class DRXEnv(gym.Env):
         #self.belief = int(np.random.uniform(low=0, high=100, size=(1,))[0])
 
         self.state = gentraffic(self.belief,self.uplinktime)
-        observation = self._get_obs()
+        observation = self._get_obs() #[self.belief, 0.2] here 0.2 is the expected maximum latency
         return observation
  
     def delay(self, interval, action):
@@ -80,6 +86,7 @@ class DRXEnv(gym.Env):
         sleeptime = 0
         idletime = 0
         latency = 0
+        # T_down = 0
         if interval == 0:
             return 0, 0, 0
         
@@ -175,17 +182,23 @@ class DRXEnv(gym.Env):
         energy = 0
 
         act = [0,0,0]
+        # action[i] ranges from -1 to 1
+        # we need to map it to 0 to 15 (now its int) to fix!
+        # act[0]: rrc_release
+        # act[1]: idle (more detailed idle drx to fix!)
+        # act[2]: PSM (more detailed PSM drx to fix!)
+        
         act[0] = int(((action[0] - (-1)) / (1 - (-1))) * (new_max - new_min) + new_min)
         act[1] = int(((action[1] - (-1)) / (1 - (-1))) * (new_max - new_min) + new_min)
         act[2] = int(((action[2] - (-1)) / (1 - (-1))) * (30 - new_min) + new_min)
-        
+         
         #print(action,act)
         uplinktime = self.uplinktime
         downlinktime = self.state
         belief = self.belief
 
         # next_state
-        #for testing
+        #for testing 
         self.belief = self.pattern[int(self.time//15)]
 
         #for training
@@ -195,22 +208,25 @@ class DRXEnv(gym.Env):
         self.state = gentraffic(self.belief,uplinktime)
  
 
-         # clip drx parameters
+        # clip drx parameters
+        # if rrc_release > T_up
         if act[0] >= uplinktime:
             act[0] = uplinktime
             act[1] = 0
+        # if rrc_release < T_up
         else:
-            act[1] = min(uplinktime-act[0],act[1])
- 
+            # idle = min(idle, T(T_up-rrc_release))
+            act[1] = min(uplinktime-act[0],act[1]) 
         
+        # encounter downlink traffic  
         if downlinktime <= uplinktime:
-            #do not have to consider uplink condition
+            #do not consider uplink condition
             latency, energy, recv_time = self.delay(downlinktime,act)
-
-        # In the 15 mins, no downlink or downlink at the 15th min
+        # no downlink or downlink in 15 min 
         else:
-            #latency,recv_time = self.delay(downlinktime%uplinktime,action)
-            #recv_time += uplinktime*(downlinktime//uplinktime)
+            # does this else work?
+            # latency,recv_time = self.delay(downlinktime%uplinktime,action)
+            # recv_time += uplinktime*(downlinktime//uplinktime)
             recv_time = uplinktime
             
         self.time = self.time + recv_time
