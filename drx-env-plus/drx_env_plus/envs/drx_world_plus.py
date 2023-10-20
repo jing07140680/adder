@@ -15,7 +15,7 @@ max_minutes = 15
 max_subframes = max_minutes*60*1000
 #action_to_po = {0: 4, 1: 9}
 max_delay = 20000
-
+ 
  
 # energy consumption here use average current
 # Energy usage, the unit is uA(current)(to fix!!!)
@@ -327,13 +327,12 @@ class DRXEnv(gym.Env):
         return latency, energy, recv_time
 
     
-    def fillin(self, obs):
-        global rf 
+    def fillin(self, obs, state):
         self.belief = obs[1]
-        self.state = gentraffic(self.belief,self.uplinktime)
-        #rf = obs[2]
+        #self.state = gentraffic(self.belief,self.uplinktime)
+        self.state = state
         #print(self.belief,self.state)
-     
+        
          
     def step(self, action):
         global sf
@@ -348,7 +347,7 @@ class DRXEnv(gym.Env):
         T_u = self.uplinktime
         T_d = self.state
         belief = self.belief
-        
+        #print("T_d:",T_d)
         ############### Apply Mask and Constraint Enforcement to the action space ###################### 
         #print(action)
         act=[0]*4
@@ -378,8 +377,10 @@ class DRXEnv(gym.Env):
         #print("time:", self.time)
         terminated=1 if self.time >= 85500000 else 0 
         #terminated=1 if self.time >= max_subframes*20 else 0
-        nofawake = int(recv_time/max_delay)
-        standard = nofawake*IE+(recv_time-nofawake)*BE+CE
+        #nofawake = int(recv_time/max_delay)
+        #standard = nofawake*IE+(recv_time-nofawake)*BE+CE
+        nofawake = int(T_d/max_delay)
+        standard = nofawake*IE+(T_d-nofawake)*BE+CE
         
         if latency > max_delay:
             #reward=-belief*(latency/recv_time)*50 
@@ -399,7 +400,7 @@ class DRXEnv(gym.Env):
         self._set_obs()
         observation = self._get_obs()
         #print(observation)
-        return observation, reward, terminated, [self.time,latency,energy,standard,T_d]
+        return observation, reward, terminated, [self.time,latency,energy,standard,T_d] 
  
  
  
