@@ -45,7 +45,7 @@ class DDPGActor(nn.Module):
             nn.Tanh()
             #nn.ReLU(),
             #nn.Linear(300, 1) 
-        ) 
+        )  
  
     def forward(self, x):
         #print("actor:",self.net[4].weight[1])

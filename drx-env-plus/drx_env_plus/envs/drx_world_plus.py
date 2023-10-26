@@ -159,7 +159,6 @@ class DRXEnv(gym.Env):
         PO = 4
         T3412 = T3324+PSM
         Cycle = T3412+edrx_cycle
-        PF = 0
         global sf
         global rf
         nofcycle = T_d // (rrc_release+T3412)
@@ -186,13 +185,14 @@ class DRXEnv(gym.Env):
             sf = (sf + rrc_release) % 10
             cur_time = rrc_release
             tplot(CE)
-
+            #print("rrc_connected:",energy)
             ############ rrc_idle #############
             flag = 0
+            PF = 0
             while cur_time < rrc_release + T3324:
                 if rf == PF and sf == PO:
                     flag = 1
-                    PF = PF + edrx_cycle
+                    PF = (PF + edrx_cycle)
                     energy += IE
                     tplot(IE)
                 else:
@@ -207,7 +207,8 @@ class DRXEnv(gym.Env):
                         rf += 1
                     else:
                         rf = (rf+1) % 1024
-            tplot(SE) 
+            #print("rrc_idle:",energy)
+            tplot(SE)
             energy += PSM*SE
             cur_time += PSM
             rf = rf % 1024
@@ -216,7 +217,9 @@ class DRXEnv(gym.Env):
             tplot(SE)
             tmp_nofcycle -= 1
             cnt += 1
-            
+            #print("cycle:",energy)
+
+        #print("end of cycle:",energy)
         cur_time = 0
         recv_time = 0
         triggered = 0
@@ -236,7 +239,7 @@ class DRXEnv(gym.Env):
             if rrc_release <= tmp_time < rrc_release + T3324: 
                 if rf == PF and sf == PO:
                     flag = 1
-                    PF = PF + edrx_cycle
+                    PF = (PF + edrx_cycle) 
                     connected = 1 
                     energy += IE
                     tplot(IE)
@@ -273,7 +276,7 @@ class DRXEnv(gym.Env):
                     rf += 1
                     
         latency = recv_time - T_d
-
+ 
         if self.debug: 
             print('T_d:', T_d)
             print('recv_t:', recv_time)
@@ -356,8 +359,8 @@ class DRXEnv(gym.Env):
         act[2]=int(((action[2] - (-1)) / (1 - (-1))) * (max_subframes/10-1)+1) #action['edrx_cycle'] 
         #act[3]=action['PO']
         act[3]=int(((action[3] - (-1)) / (1 - (-1))) * (max_subframes))  #action['PSM'] 
-  
-        # print(act)
+        
+        #print(act)
         # set constraint for each timer:
         res_time=T_u
         res_time=T_u-act[0]
@@ -377,31 +380,31 @@ class DRXEnv(gym.Env):
         #print("time:", self.time)
         terminated=1 if self.time >= 85500000 else 0 
         #terminated=1 if self.time >= max_subframes*20 else 0
-        #nofawake = int(recv_time/max_delay)
-        #standard = nofawake*IE+(recv_time-nofawake)*BE+CE
-        nofawake = int(T_d/max_delay)
-        standard = nofawake*IE+(T_d-nofawake)*BE+CE
+        nofawake = int(recv_time/max_delay)
+        standard = nofawake*IE+(recv_time-nofawake)*BE+CE
+        #nofawake = int(T_d/max_delay)
+        #standard = nofawake*IE+(T_d-nofawake)*BE+CE
         
         if latency > max_delay:
-            #reward=-belief*(latency/recv_time)*50 
-            reward= 0.5*(-(1-max_delay/latency)-1) 
-        else:        
+            #reward=-belief*(latency/recv_time)*50  
+            reward= 0.5*(-(1-max_delay/latency)-1)    
+        else:         
             #reward=-(100-belief)*(energy/((recv_time+1)*CE))
-            if energy > standard:
+            if energy > standard: 
                 #reward = -(100-belief)*(1-standard/energy)/100
-                reward = -0.5*(1-standard/energy) 
-            else: 
-                #reward = (100-belief)*(1-(energy/standard))/100
+                reward = -0.5*(1-standard/energy)  
+            else:  
+                #reward = (100-belief)*(1-(energy/standard))/100 
                 reward = 1-energy/standard
             #reward = pow(reward,19)              
         if self.debug: 
             print("reward: ", reward) 
-            print("used energy:", energy, "w/o idle and PSM:", (recv_time+1)*CE) 
+            print("used energy:", energy, "standard",standard) 
         self._set_obs()
         observation = self._get_obs()
         #print(observation)
         return observation, reward, terminated, [self.time,latency,energy,standard,T_d] 
- 
+  
  
  
 
