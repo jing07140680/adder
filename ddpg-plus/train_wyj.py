@@ -24,16 +24,18 @@ import os
 ENV_ID = "Drx-v1"
 GAMMA = 0.9
 BATCH_SIZE = 256 
-#LEARNING_RATE = 0.000005
-#LEARNING_RATE_ = 0.0000005
+#LEARNING_RATE = 0.005
+#LEARNING_RATE_ = 0.00008
 LEARNING_RATE = 0.0005
-LEARNING_RATE_ = 0.00005
+LEARNING_RATE_ = 0.0005
+
 REPLAY_SIZE = 1000  
 REPLAY_INITIAL = 100  
 TEST_ITERS = 10  
-max_minutes = 15 
+max_minutes = 120 
 max_subframes = max_minutes*60*1000
-debug_lr = 0 
+debug_lr = 0
+DT = 10000
   
  
 #class CustomBufferManager(BaseManager):
@@ -45,23 +47,25 @@ def worker(local_buffer,exp_source, idx, shared_buffer):
     for sample in local_buffer: 
         shared_buffer.share_add(sample,idx)
         
-def test_net(net, env, count=1, device="cpu"):
+def test_net(net, env, test_, count=1, device="cpu"):
     rewards = 0.0 
     steps = 0
     for _ in range(count):
         obs = env.reset()
-        for step in range(20):
+        teststep = 20 if test_ != 2 else 1
+        for step in range(teststep):
             obs_v = ptan.agent.float32_preprocessor([obs]).to(device)
             mu_v = net(obs_v)
             action = mu_v.squeeze(dim=0).data.cpu().numpy()
+            action[0] = -1 
             obs, reward, done, info = env.step(action)
             act = [0]*4
-            act[0] = int(((action[0] - (-1)) / (1 - (-1))) * 29999 + 1) 
+            act[0] = int(((action[0] - (-1)) / (1 - (-1))) * 29999 + 2001) 
             act[1] = int(((action[1] - (-1)) / (1 - (-1))) * (max_subframes-10)+10)
-            act[2] = int(((action[2] - (-1)) / (1 - (-1))) * (max_subframes/10-1)+1)
+            act[2] = int(((action[2] - (-1)) / (1 - (-1))) * (DT/10-1)+1)
             act[3] = int(((action[3] - (-1)) / (1 - (-1))) * (max_subframes))
             #print('cur state:', obs_v, 'next state:',obs, 'cur act:',act,'cur reward:',reward, 'cur T_d:',info)
-            print("obs:",obs_v[0][1],"T_d:",info[-1],"action:",act, "reward:",reward)
+            print("obs:",obs_v[0][1],"obs/gold:",obs_v[0][1]/obs_v[0][0],"T_d:",info[-1],"action:",act, "reward:",reward)
             rewards += reward
             steps += 1 
             if done: 
@@ -72,7 +76,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--cuda", default=False, action='store_true', help='Enable CUDA') 
     parser.add_argument("-n", "--name", required=True, help="Name of the run") 
-    parser.add_argument("-m", "--mode", default=0, type=int,  help="mode: 0: random 1: periodic, 2: periodic w/ congestion")
+    parser.add_argument("-m", "--mode", default=0, type=int,  help="mode: 0: random 1: periodic")
     #parser.add_argument("-a", "--LEARNING_RATE_", required=True,type=int, help="actor learning rate")
     #parser.add_argument("-c", "--LEARNING_RATE", required=True,type=int, help="critic learning rate")
  
@@ -108,7 +112,7 @@ if __name__ == "__main__":
      
     tgt_act_net = ptan.agent.TargetNet(act_net)
     tgt_crt_net = ptan.agent.TargetNet(crt_net)
-    
+     
     writer = SummaryWriter(comment="-ddpg_" + args.name)
     agent = model.AgentDDPG(act_net, device=device)
    
@@ -223,7 +227,7 @@ if __name__ == "__main__":
                 if frame_idx % TEST_ITERS == 0:
                     print("Test iters:")
                     ts = time.time() 
-                    rewards, steps = test_net(act_net, test_env, device=device) 
+                    rewards, steps = test_net(act_net, test_env, test_, device=device) 
                     print("Test done in %.2f sec, reward %.3f, steps %d" % (
                         time.time() - ts, rewards, steps))
                     writer.add_scalar("test_reward", rewards, frame_idx)
@@ -231,14 +235,18 @@ if __name__ == "__main__":
                     if best_reward is None or best_reward < rewards:  
                         if best_reward is not None:
                             print("Best reward updated: %.3f -> %.3f" % (best_reward, rewards))
-                            name = "best_%+.3f_%d.dat" % (rewards, frame_idx)
-                            fname = os.path.join(save_path, name)
-                            torch.save(act_net.state_dict(), fname)
+                            actname = "best_%+.3f_%d_act.dat" % (rewards, frame_idx)
+                            crtname = "best_%+.3f_%d_crt.dat" % (rewards, frame_idx)
+                            actfname = os.path.join(save_path, actname)
+                            crtfname = os.path.join(save_path, crtname)
+                            torch.save(act_net.state_dict(), actfname)
+                            torch.save(crt_net.state_dict(), crtfname)
                         best_reward = rewards
-                    if frame_idx % 100 == 0:
+                    if frame_idx % 10 == 0: 
                         print("Newest reward updated")
-                        name = "newest.dat"
-                        fname = os.path.join(save_path, name)
-                        torch.save(act_net.state_dict(), fname)
-
- 
+                        actname = "newest_act.dat"
+                        crtname = "newest_crt.dat"
+                        actfname = os.path.join(save_path, actname)
+                        crtfname = os.path.join(save_path, crtname)
+                        torch.save(act_net.state_dict(), actfname)
+                        torch.save(crt_net.state_dict(), crtfname)

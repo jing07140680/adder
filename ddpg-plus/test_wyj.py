@@ -8,112 +8,158 @@ import math
 import numpy as np
 import torch
 import multiprocessing
+import torch.nn as nn
+from torch.utils.data import DataLoader
+import torch.optim as optim
+from tensorboardX import SummaryWriter
+import torch.nn.functional as F
+import ptan
+import logging
+import sys
+from genusg import genTraffic, genrow, genrecord
+import scipy.stats as stats
+import pandas as pd
+import os
+import csv
+from scipy.stats import percentileofscore
+import pickle
 
 ENV_ID = "Drx-v1"
-# energy consumption here use average current
-# Energy usage, the unit is uA(current)(to fix!!!)
-CE = 35000 # energy consumed when fully connected
-IE = 2620  # energy consumed when connected in edrx idle
-BE = 5  # Basic energy consumed when released in edrx idle
-SE = 2.7  # Sleep energy
-gold = 0
-gold2 = 0
 
-def genTraffic(record,cur_time):
-    #print(record,cur_time)
-    if not record:
-        state = 900000
-    else:
-        if cur_time < record[0] and cur_time+900000 >= record[0]:
-            state = record[0]-cur_time
-            record.pop(0)
-        else:
-            state = 900000
-    return state
-  
 
-def genrecord(R,output_numbers):
-    probabilities = output_numbers[R]
-    #gold = np.percentile(probabilities, 80)
-    #gold2 = np.percentile(probabilities, 30)
-    gold = np.percentile(probabilities, 80)
-    gold2 = np.percentile(probabilities, 40)
-    rows = 100
-    columns = 24  
-    matrix = np.zeros((rows, columns))
- 
-    for col, prob in enumerate(probabilities):
-        matrix[:, col] = np.random.choice([0, 1], size=(rows,), p=[1-prob, prob])
-    # Replace 1s with random value from 0 to 60
-    matrix[matrix == 1] = [random.randint(0, 60) for _ in range(int(np.sum(matrix)))]
-    return matrix, gold, gold2
-
-def genrow(record): 
-    res = []
-    cnt = 0
-    for i in range(1,len(record)):
-        if record[i] != 0:
-            res.append((cnt+record[i])*60000)
-            cnt += 60
-        else:
-            cnt += 60
-    #print(res)
-    return res
-        
-def test(records,trail,dsmap,net,L,uL,S,E,lock, gold, gold2):
-    record = genrow(records[trail])
-    beliefstate = dsmap[0]
+def test_edrx(record, dsmap, L, E, lock,gold):
+    beliefstate = dsmap
+    gold = np.percentile(beliefstate, 30)    
+    action=[-1,1,1,-1]
     cur_time = 0
     done = 0
     res = 0
-    while True: 
-        belief = max(beliefstate[math.floor(cur_time/60000) : math.floor(cur_time/60000)+15])
-        #print(belief)
-        if belief > gold:
-            #belief = 0.73
-            belief = 0.73
-        elif gold2 < belief <= gold:
-            #belief = 0.71
-            belief = 0.7 
-        else: 
-            #belief = 0.3
-            belief = 0
-        obs = [20, (belief)*100]
+    while True:
+        belief = max(beliefstate[math.floor(cur_time/60000) : math.floor(cur_time/60000)+60]) 
+        obs = [gold*100, (belief)*100]
+        state = genTraffic(record,cur_time)
+        env.fillin(obs,state)             
+        obs_, reward, done, info = env.step(action)
+        cur_time = info[0]
+        with lock:
+            L.append(info[1]) #latency
+            E.append(info[2])
+        if done:
+            obs = env.reset()
+            break
+    
+def test(record,dsmap,act_net,L,E,lock,gold):
+    beliefstate = dsmap
+    gold = np.percentile(beliefstate, 30)
+    cur_time = 0
+    done = 0
+    res = 0  
+    while True:
+        belief = max(beliefstate[math.floor(cur_time/60000) : math.floor(cur_time/60000)+60])
+        obs = [gold*100, (belief)*100]
         state = genTraffic(record,cur_time)
         obs_v = torch.FloatTensor([obs])
-        mu_v = net(obs_v)
+        mu_v = act_net(obs_v)
+        formatted_mu_v = [float("{:.2f}".format(x)) for x in mu_v.tolist()[0]]
+        print(obs_v, formatted_mu_v)
         action = mu_v.squeeze(dim=0).data.numpy()
-        if (state != 900000):
-            print(obs[1], action)
+        action = np.clip(action, -1, 1)
+        action[0] = -1
         env.fillin(obs,state)
         obs_, reward, done, info = env.step(action)
         cur_time = info[0]
-        #print(info[4],info[1],obs[1])
+
         with lock:
-            if state != 900000 and obs[1] != 30:
-                L.append(info[1])
-            elif state != 900000 and obs[1] == 0:
-                print(state,obs[1])
-                uL.append(info[1])
+            L.append(info[1]) #latency
             E.append(info[2])
-            S.append(info[3])
-             
-        if done: 
+        if done:
             obs = env.reset()
             break
 
+
+def analyze_validation(L,B,S,E):
+    data = np.array(L)/1000
+    mean = np.mean(data)
+    median = np.median(data)
+    mode = stats.mode(data)
+    minimum = np.min(data)
+    maximum = np.max(data)
+    range_ = np.ptp(data)
+    std_dev = np.std(data)
+    variance = np.var(data)
+    q1 = np.percentile(data, 25)  # 25th percentile (Q1)
+    q3 = np.percentile(data, 75)  # 75th percentile (Q3)
+    iqr = q3 - q1  # Interquartile range
+    skewness = stats.skew(data)
+    kurtosis = stats.kurtosis(data)
+    summary = pd.DataFrame({
+        "Measure": ["Mean", "Median", "Mode", "Min", "Max", "Range", "Standard Deviation", "Variance", "Skewness", "Kurtosis", "Q1","Q3","IQR"],
+        "Value": [mean, median, mode[0][0], minimum, maximum, range_, std_dev, variance, skewness, kurtosis, q1, q3, iqr]
+    })  
+    print(summary) 
+    logging.info(summary)
+    if sum(E)<sum(S):
+        logging.info("energy saved: %.3f", 1-sum(E)/sum(S))
+    else:
+        logging.info("energy waste: %.3f", 1-sum(S)/sum(E))
+    return
+
+'''
+def modelbufsave(L_buffer,B_buffer,S_buffer,E_buffer,T_buffer):
+    #B_buffer_ = [percentileofscore(B_buffer, x) for x in B_buffer]
+    with open('L.pkl', 'wb') as f:
+        pickle.dump(L_buffer, f)
+    with open('B.pkl', 'wb') as f:
+        pickle.dump(B_buffer, f)
+    with open('S.pkl', 'wb') as f:
+        pickle.dump(S_buffer, f)
+    with open('E.pkl', 'wb') as f:
+        pickle.dump(E_buffer, f)
+    with open('T.pkl', 'wb') as f:
+        pickle.dump(T_buffer, f)
+'''
+def datasave(L1,L2,L3,E1,E2,E3):
+    with open('L_act.pkl', 'wb') as f:
+        pickle.dump(L1, f)
+    with open('L_pred.pkl', 'wb') as f:
+        pickle.dump(L2, f)
+    with open('L_edrx.pkl', 'wb') as f:
+        pickle.dump(L3, f)
+    with open('E_act.pkl', 'wb') as f:
+        pickle.dump(E1, f)
+    with open('E_pred.pkl', 'wb') as f:
+        pickle.dump(E2, f)
+    with open('E_edrx.pkl', 'wb') as f:
+        pickle.dump(E3, f)
+
+
+    #zipped_data = list(zip(L_buffer,B_buffer,S_buffer,E_buffer,T_buffer))
+    #with open('buffers/R_test.csv', 'w', newline='') as file:
+    #    writer = csv.writer(file)
+    #    writer.writerow(['Latency','Belief','Standard','Energy','Time Arrive'])
+    #    writer.writerows(zipped_data)
+          
 if __name__ == "__main__":
+    logging.basicConfig(filename='ddpg.log', level=logging.INFO)
+    np.set_printoptions(formatter={'float': '{: 0.3f}'.format})
     parser = argparse.ArgumentParser()
-    parser.add_argument("-m", "--model", required=False, help="Model file to load")
+    parser.add_argument("-am", "--amodel", required=False, help="actor Model file to load")
+    parser.add_argument("-cm", "--cmodel", required=False, help="critic Model file to load")
     parser.add_argument("-e", "--env", default=ENV_ID, help="Environment name to use, default=" + ENV_ID)
     parser.add_argument("-r", "--record", help="If specified, sets the recording dir, default=Disabled")
     args = parser.parse_args()
     env = gym.make(args.env)
+    device = torch.device("cpu")
     if args.record:
         env = gym.wrappers.Monitor(env, args.record) 
-    net = model.DDPGActor(env.observation_space.shape[0], env.action_space.shape[0])
-    net.load_state_dict(torch.load(args.model))
-  
+    pact_net = model.DDPGActor(env.observation_space.shape[0], env.action_space.shape[0]).to(device) 
+    pcrt_net = model.DDPGCritic(env.observation_space.shape[0], env.action_space.shape[0]).to(device)
+    pact_net.load_state_dict(torch.load(args.amodel))
+    pcrt_net.load_state_dict(torch.load(args.cmodel))
+    act_net = pact_net
+    crt_net = pcrt_net
+
+ 
     # load actual statistic
     dsmap = []
     dsf = open("../scooterdata/actual.txt")
@@ -129,8 +175,7 @@ if __name__ == "__main__":
     dspf.close()
     for line in Lines:
         dspmap.append([float(x) for x in line.strip().split(" ")])
-
-        
+         
     output_numbers = []
     with open('../scooterdata/actual.txt', 'r') as f:
         for line in f:
@@ -138,52 +183,71 @@ if __name__ == "__main__":
             # Extract every 15th number starting from the first
             unique_numbers = numbers[::60]
             output_numbers.append([float(x) for x in unique_numbers])
-    f.close()
-
-    '''
-    # load prediction
-    records = []
-    rcdf = open("/adder/scooterdata/records.txt")
-    Lines = rcdf.readlines()
-    rcdf.close()
-    for k, line in enumerate(Lines):
-        if k%2 == 0:
-            continue
-        else:
-            tmprecords = [float(x) for x in line.strip().split(",")]
-            tmprecords.insert(0,0)
-            records.append([60000*(tmprecords[i]+tmprecords[i-1]) for i in range(1,len(tmprecords))])
-    '''
-
-    with multiprocessing.Manager() as manager:
-        lock = multiprocessing.Lock()
-        L = manager.list()
-        uL = manager.list()
-        E = manager.list()
-        S = manager.list()
-        processes = []
-
-        for R in range(2): 
-            records, gold, gold2 = genrecord(R,output_numbers)        
-            # start motivation
-            for loop in range(1):
-                for trail in range(20):#len(records)):
-                    #print(trail)
-                    process = multiprocessing.Process(target=test, args=(records,loop*20+trail,dsmap,net,L,uL,S,E,lock,gold, gold2))
+    f.close()   
+   
+    L_act,E_act,L_pred,E_pred,L_edrx,E_edrx = [],[],[],[],[],[]
+    for R_ in range(5):
+        records, gold = genrecord(R_,output_numbers)
+        dsmap_ = dsmap[R_]
+        dspmap_ = dspmap[R_]
+        record = [genrow(records[x]) for x in range(100)]
+ 
+        with multiprocessing.Manager() as manager:
+            lock = multiprocessing.Lock()
+            L = manager.list()
+            E = manager.list()
+            for loop in range(4):
+                processes = []
+                for trail in range(25):
+                    trail = loop*25+trail
+                    process = multiprocessing.Process(target=test, args=(record[trail], dsmap_, act_net, L, E, lock, gold))
                     processes.append(process)
                     process.start()
-
-                    # Waiting for all processes to finish
+                    
+                # Waiting for all processes to finish
                 for process in processes:
-                    process.join()
+                    process.join()                    
+            L_act.extend(list(L))
+            E_act.extend(list(E))
+            
+        with multiprocessing.Manager() as manager:
+            lock = multiprocessing.Lock()
+            L = manager.list()
+            E = manager.list()
+            for loop in range(4):
+                processes = []
+                for trail in range(25):
+                    trail = loop*25+trail
+                    process = multiprocessing.Process(target=test, args=(record[trail], dspmap_, act_net, L, E, lock, gold))
+                    processes.append(process)
+                    process.start()
+                            
+                # Waiting for all processes to finish
+                for process in processes:
+                    process.join() 
+                            
+            L_pred.extend(list(L))
+            E_pred.extend(list(E))
 
-        if not L or not S or not E:
-            print("L NULL")
-        else:
-            print("latency:",L)
-            print(len(L), len(uL))
-            print("average latency:", np.mean(list(L)),"max latency:",max(list(L)))
-            print("energy saved:", 1-sum(E)/sum(S)) if sum(E)<sum(S) else  print("energy waste:", 1-sum(S)/sum(E))
+        with multiprocessing.Manager() as manager:
+            lock = multiprocessing.Lock()
+            L = manager.list()
+            E = manager.list()
+            for loop in range(4):
+                processes = []
+                for trail in range(25):
+                    trail = loop*25+trail
+                    process = multiprocessing.Process(target=test_edrx, args=(record[trail], dspmap_, L, E, lock, gold))
+                    processes.append(process)
+                    process.start()
+                            
+                # Waiting for all processes to finish
+                for process in processes:
+                    process.join() 
+                            
+            L_edrx.extend(list(L))
+            E_edrx.extend(list(E))
 
-        
- 
+            #analyze_validation(list(L),list(B),list(S),list(E), list(T))
+    #modelbufsave(L_buffer,B_buffer,S_buffer,E_buffer,T_buffer)
+    datasave(L_act,L_pred,L_edrx,E_act,E_pred,E_edrx)

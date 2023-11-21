@@ -31,9 +31,12 @@ if __name__ == "__main__":
     if args.record:
         env = gym.wrappers.Monitor(env, args.record) 
     pact_net = model.DDPGActor(env.observation_space.shape[0], env.action_space.shape[0]).to(device)
-    pcrt_net = model.DDPGCritic(env.observation_space.shape[0], env.action_space.shape[0]).to(device)
+    #pcrt_net = model.DDPGCritic(env.observation_space.shape[0], env.action_space.shape[0]).to(device)
+    #pact_net = model.DDPGActor(5, env.action_space.shape[0]).to(device)
     pact_net.load_state_dict(torch.load(args.amodel))
-    pcrt_net.load_state_dict(torch.load(args.cmodel))
-    
-    for i in range(100):
-        print(i,":", pact_net(torch.FloatTensor([20, i])))
+    #pcrt_net.load_state_dict(torch.load(args.cmodel))
+
+    for i in range(10):
+        print("act:", pact_net(torch.FloatTensor([40,i*10])))
+
+   #print("act:", pact_net(torch.FloatTensor([3,3,3,3,3])))

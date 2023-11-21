@@ -179,17 +179,23 @@ class AgentDDPG(ptan.agent.BaseAgent):
     def __call__(self, states, agent_states):
         states_v = ptan.agent.float32_preprocessor(states).to(self.device)
         mu_v = self.net(states_v)
-        print(states_v[0][1] ,"mu_v:",mu_v)
+        #print(states_v[0][1]/states_v[0][0] ,"mu_v:",mu_v)
         actions = mu_v.data.cpu().numpy()
-        actions += self.epsilon * np.random.uniform(low=-2, high=2,size=actions.shape)#np.random.normal(size=actions.shape)
+        dice = np.random.uniform(0,1)
+        if dice < 0.2:
+            actions += np.random.uniform(-0.1, 0.1,size=actions.shape)
+        else:
+            actions = np.random.uniform(-1, 1,size=actions.shape).astype(np.float32)
+        #actions += self.epsilon * np.random.uniform(low=-2, high=2,size=actions.shape)#np.random.normal(size=actions.shape)
         actions = np.clip(actions, -1, 1)
+        actions[0][0] = -1
         #print("act:",actions)
         return actions, agent_states
                                                                                              
 class AgentD4PG(ptan.agent.BaseAgent):
     """
     Agent implementing noisy agent
-    """
+    """ 
     def __init__(self, net, device="cpu", epsilon=0.3):
         self.net = net
         self.device = device

@@ -7,29 +7,29 @@ from plotly.subplots import make_subplots
 import time
 import copy
 
-
-#np.random.seed(34)
 sf = 0  # subframe
 rf = 0  # radio frame
-max_minutes = 15
+max_minutes = 120
 max_subframes = max_minutes*60*1000
 #action_to_po = {0: 4, 1: 9}
-max_delay = 20000
- 
+#max_delay = 20000
+max_delay = 10000
  
 # energy consumption here use average current
 # Energy usage, the unit is uA(current)(to fix!!!)
-CE = 35000 # energy consumed when fully connected
-IE = 2620  # energy consumed when connected in edrx idle
-BE = 5  # Basic energy consumed when released in edrx idle
-SE = 2.7  # Sleep energy
-
+#CE = 35000 # energy consumed when fully connected
+#IE = 2620  # energy consumed when connected in edrx idle
+#BE = 5  # Basic energy consumed when released in edrx idle
+#SE = 2.7  # Sleep energy
+CE = 15345
+IE = 5913
+BE = 23.82
+SE = 2.7
  
 def trafficpattern( pattern = 1, steps = 30):
     ''' 
     # Set mean and standard deviation
     mu, sigma = 0, 1
-
     # Generate random data from Gaussian distribution
     data = np.random.normal(mu, sigma, 1000)
 
@@ -46,7 +46,7 @@ def trafficpattern( pattern = 1, steps = 30):
     np.random.seed(0)
     traffic = [random.randint(0, 100) for _ in range(steps)]
     return traffic
-
+ 
 
     
   
@@ -75,11 +75,11 @@ def genfixed():
     matrix[matrix == 0] = 300000
     matrix[matrix == 1] = 900000
     return matrix
-'''
+''' 
 # periodic traffic
 def genperiodic(): 
     return 300000
- 
+  
 class DRXEnv(gym.Env):
 
     fig = make_subplots(rows=1, cols=1)
@@ -90,26 +90,29 @@ class DRXEnv(gym.Env):
         # Train mode: random
         if self.test == 0:
             #print("TEST mode")
-            #self.pattern = trafficpattern()
+            #self.pattern = trafficpattern() 
             #self.belief = self.pattern[int(self.time//max_subframes)]
             self.belief = np.random.uniform(low=0, high=100, size=(1,))[0]
+            self.gold = np.random.uniform(low=0, high=100, size=(1,))[0]
             self.state = gentraffic(self.belief, self.uplinktime)
              
         # test mode: fixed random 
         elif self.test == 1:
             self.belief = self.tmppattern.pop(0)
             #self.state = self.tmpavl.pop(0)
+            self.gold = 40
             self.state = gentraffic(self.belief, self.uplinktime)
-
+ 
         # mode: periodic
         elif self.test == 2:
             self.belief = 100
+            self.gold = 100
             self.state = genperiodic()
  
             
     def _get_obs(self):
         global rf
-        return [20, self.belief]#, (rf%1024)/10]
+        return [self.gold, self.belief]#, (rf%1024)/10]
                            
     def __init__(self, render_mode=None, debug=False, timelineplot=False, test=0, belief = 0):
         self.debug = debug 
@@ -166,7 +169,7 @@ class DRXEnv(gym.Env):
         tmp_nofcycle = nofcycle
         fig = self.fig
         cnt = 0
-
+ 
         
         def tplot(powLevel):
             if self.timelineplot:
@@ -185,7 +188,7 @@ class DRXEnv(gym.Env):
             sf = (sf + rrc_release) % 10
             cur_time = rrc_release
             tplot(CE)
-            #print("rrc_connected:",energy)
+            #print("rrc_connected:",energy90)
             ############ rrc_idle #############
             flag = 0
             PF = 0
@@ -195,7 +198,7 @@ class DRXEnv(gym.Env):
                     PF = (PF + edrx_cycle)
                     energy += IE
                     tplot(IE)
-                else:
+                else: 
                     energy += BE
                     tplot(BE)
 
@@ -232,38 +235,43 @@ class DRXEnv(gym.Env):
 
             tmp_time = cur_time % (T3412+rrc_release)
             if tmp_time < rrc_release:
-                connected = 1
+                if tmp_time >= 2000:
+                    connected = 1
+                #if not triggered:
                 energy += CE
                 tplot(CE)
-
+ 
             if rrc_release <= tmp_time < rrc_release + T3324: 
                 if rf == PF and sf == PO:
                     flag = 1
                     PF = (PF + edrx_cycle) 
                     connected = 1 
+                    #if not triggered:
                     energy += IE
                     tplot(IE)
                 else:
                     connected = 0
+                    #if not triggered:
                     energy += BE
                     tplot(BE)
   
             if rrc_release + T3324 <= tmp_time < rrc_release + T3324 + PSM:
                 rf = rf % 1024
                 connected = 0
+                #if not triggered:
                 energy += SE
                 tplot(SE)
 
 
             # print(T_d, cur_time, tmp_time, connected, triggered)
-            # record the time when UE received downlink traffic 
+            # record the time when UE received downlink traffic  
             if triggered and connected:
                 recv_time = cur_time + (rrc_release+T3412)*nofcycle
                 #print("!!!", cur_time, (rrc_release+T3412)*nofcycle, nofcycle)
                 break
 
-            if triggered and cur_time + (rrc_release+T3412)*nofcycle ==900000:
-                recv_time = 900000
+            if triggered and cur_time + (rrc_release+T3412)*nofcycle ==max_subframes:
+                recv_time = max_subframes
                 break
  
             # update time
@@ -284,7 +292,7 @@ class DRXEnv(gym.Env):
             print('energy:', energy)
  
         if self.timelineplot:
-            self.fig.update_xaxes(range=[0, 900000])
+            self.fig.update_xaxes(range=[0, max_subframes])
             self.fig.update_layout(
                 title='LTE-M DRX Energy and Traffic monitor per 15 mintues',  # Set the main plot title
                 title_x=0.5,  # Set the x-position of the main title (0.5 centers the title)
@@ -332,6 +340,7 @@ class DRXEnv(gym.Env):
     
     def fillin(self, obs, state):
         self.belief = obs[1]
+        self.gold = obs[0]
         #self.state = gentraffic(self.belief,self.uplinktime)
         self.state = state
         #print(self.belief,self.state)
@@ -350,13 +359,14 @@ class DRXEnv(gym.Env):
         T_u = self.uplinktime
         T_d = self.state
         belief = self.belief
+        gold = self.gold
         #print("T_d:",T_d)
         ############### Apply Mask and Constraint Enforcement to the action space ###################### 
         #print(action)
         act=[0]*4
-        act[0]=int(((action[0] - (-1)) / (1 - (-1))) * 29999 + 1)  #action['rrc_release']
+        act[0]=int(((action[0] - (-1)) / (1 - (-1))) * 29999 + 2001)  #action['rrc_release']
         act[1]=int(((action[1] - (-1)) / (1 - (-1))) * (max_subframes-10)+10)  #action['T3324']
-        act[2]=int(((action[2] - (-1)) / (1 - (-1))) * (max_subframes/10-1)+1) #action['edrx_cycle'] 
+        act[2]=int(((action[2] - (-1)) / (1 - (-1))) * (max_delay/10-1)+1) #action['edrx_cycle'] 
         #act[3]=action['PO']
         act[3]=int(((action[3] - (-1)) / (1 - (-1))) * (max_subframes))  #action['PSM'] 
         
@@ -368,6 +378,7 @@ class DRXEnv(gym.Env):
         res_time -= act[1]
         act[3]=min(res_time, act[3])
         act[2]=min(act[1]//10, act[2])
+        act_ = min(act[1],act[2]*10)
         #act[3]=action_to_po[act[3]]
         #print("coverted action:",act)
 
@@ -376,15 +387,16 @@ class DRXEnv(gym.Env):
         # simulate the episode 
          
         latency, energy, recv_time = self.simulator(T_d, act) 
+        print("act:",act,"energy:", energy)
         self.time=self.time + recv_time
         #print("time:", self.time)
-        terminated=1 if self.time >= 85500000 else 0 
-        #terminated=1 if self.time >= max_subframes*20 else 0
-        nofawake = int(recv_time/max_delay)
-        standard = nofawake*IE+(recv_time-nofawake)*BE+CE
-        #nofawake = int(T_d/max_delay)
-        #standard = nofawake*IE+(T_d-nofawake)*BE+CE
-        
+        #terminated=1 if self.time >= 85500000 else 0 
+        terminated=1 if self.time >= max_subframes*20 else 0
+        #nofawake = int(recv_time/max_delay)
+        #standard = nofawake*IE+(recv_time-nofawake)*BE+CE
+        nofawake = int(T_d/max_delay)
+        standard = nofawake*IE+(T_d-nofawake)*BE+2000*CE
+        '''
         if latency > max_delay:
             #reward=-belief*(latency/recv_time)*50  
             reward= 0.5*(-(1-max_delay/latency)-1)    
@@ -393,21 +405,39 @@ class DRXEnv(gym.Env):
             if energy > standard: 
                 #reward = -(100-belief)*(1-standard/energy)/100
                 reward = -0.5*(1-standard/energy)  
-            else:  
+            else:   
                 #reward = (100-belief)*(1-(energy/standard))/100 
                 reward = 1-energy/standard
-            #reward = pow(reward,19)              
-        if self.debug: 
-            print("reward: ", reward) 
-            print("used energy:", energy, "standard",standard) 
+            #reward = pow(reward,19)                
+        '''  
+        delayitem = (max_delay-max(act_,act[3]))/max_subframes
+        #delayitem2 = 1-45*(max_delay-min(act_,act[3]))/max_subframes
+        if energy > standard: 
+            energyitem = -(1-standard/energy)
+        else:  
+            energyitem = standard/energy
+        latencyitem = -latency/max_subframes
+        print(belief, gold, delayitem,energyitem,latencyitem) 
+        #print(T_d,latency)
+        if belief > gold: 
+            if max(act_,act[3]) > max_delay:
+                reward = 10*delayitem
+            else:  
+                reward = energyitem + latencyitem
+        else:  
+            reward = energyitem + latencyitem 
+        
+        #if self.debug: 
+        print("reward: ", reward) 
+        print("used energy:", energy, "standard",standard) 
         self._set_obs()
         observation = self._get_obs()
         #print(observation)
         return observation, reward, terminated, [self.time,latency,energy,standard,T_d] 
-  
+   
  
  
-
+ 
 
  
  
