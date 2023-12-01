@@ -390,8 +390,8 @@ class DRXEnv(gym.Env):
         print("act:",act,"energy:", energy)
         self.time=self.time + recv_time
         #print("time:", self.time)
-        #terminated=1 if self.time >= 85500000 else 0 
-        terminated=1 if self.time >= max_subframes*20 else 0
+        terminated=1 if self.time >= 85500000 else 0 
+        #terminated=1 if self.time >= max_subframes*20 else 0
         #nofawake = int(recv_time/max_delay)
         #standard = nofawake*IE+(recv_time-nofawake)*BE+CE
         nofawake = int(T_d/max_delay)
