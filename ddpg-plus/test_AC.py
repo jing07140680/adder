@@ -28,7 +28,7 @@ import pickle
 ENV1_ID = "Drx-v1"
 ENV2_ID = "Drx-v2"
  
-
+max_subframes = 120*60*1000
 def test_edrx(beliefs, gold, states, env, L, E):
     L_, E_ = [], []
     action=[-1,1,1,-1]
@@ -58,7 +58,7 @@ def test_AC(beliefs, gold, states, env, act_net, L, E):
         action[0] = -1
         env.fillin(belief,gold,obs,state)
         obs, reward, done, info = env.step(action)
-        if state !=3600000:
+        if state !=max_subframes:
             L_.append(info[1]) #latency
         E_.append(info[2])
         obs = env.reset()
@@ -82,7 +82,7 @@ def test_wyj(beliefs, gold, states, env, act_net, L, E):
             action[0] = -1
             env.fillin(obs,state)
             obs_, reward, done, info = env.step(action)
-            if state != 3600000:
+            if state != max_subframes:
                 L_.append(info[1]) #latency
             E_.append(info[2])
     obs = env.reset()
@@ -176,15 +176,15 @@ if __name__ == "__main__":
     L2,E2 = manager.list(), manager.list()
     L3,E3 = manager.list(), manager.list()
     L4,E4 = manager.list(), manager.list()
-    for R_ in range(10):
+    for R_ in range(100):
         #beliefs = [random.choice(numbers) for _ in range(20)]
         beliefs = [random.uniform(0, 100) for _ in range(20)]
         print(beliefs)
         states = []
         for x in range(len(beliefs)):
             non_zero_elements_count = int(5*beliefs[x]/100)
-            non_zero_elements = np.random.randint(1, 3600000, size=non_zero_elements_count)
-            elements = [3600000]*5
+            non_zero_elements = np.random.randint(1, max_subframes, size=non_zero_elements_count)
+            elements = [max_subframes]*5
             elements[:non_zero_elements_count] = non_zero_elements
             np.random.shuffle(elements)
             states.append(elements)

@@ -25,15 +25,17 @@ from scipy.stats import percentileofscore
 import pickle
 
 ENV_ID = "Drx-v1"
-
+max_subframes = 60*60*1000
 
 def test_edrx(record, dsmap, L, E, lock,gold):
     beliefstate = dsmap
-    gold = np.percentile(beliefstate, 30)    
+    gold = np.percentile(beliefstate, 20)    
     action=[-1,1,1,-1]
     cur_time = 0
     done = 0
     res = 0
+    L_ = []
+    E_ = []
     while True:
         belief = max(beliefstate[math.floor(cur_time/60000) : math.floor(cur_time/60000)+60]) 
         obs = [gold*100, (belief)*100]
@@ -41,19 +43,24 @@ def test_edrx(record, dsmap, L, E, lock,gold):
         env.fillin(obs,state)             
         obs_, reward, done, info = env.step(action)
         cur_time = info[0]
-        with lock:
-            L.append(info[1]) #latency
-            E.append(info[2])
+        if state !=max_subframes:
+            L_.append(info[1]) #latency
+        E_.append(info[2])
         if done:
             obs = env.reset()
             break
-    
+    with lock:
+        L.append(L_)
+        E.append(E_)
+            
 def test(record,dsmap,act_net,L,E,lock,gold):
     beliefstate = dsmap
-    gold = np.percentile(beliefstate, 30)
+    gold = np.percentile(beliefstate, 20)
     cur_time = 0
     done = 0
-    res = 0  
+    res = 0
+    L_ = []
+    E_ = [] 
     while True:
         belief = max(beliefstate[math.floor(cur_time/60000) : math.floor(cur_time/60000)+60])
         obs = [gold*100, (belief)*100]
@@ -68,14 +75,15 @@ def test(record,dsmap,act_net,L,E,lock,gold):
         env.fillin(obs,state)
         obs_, reward, done, info = env.step(action)
         cur_time = info[0]
-
-        with lock:
-            L.append(info[1]) #latency
-            E.append(info[2])
+        if state !=max_subframes:
+            L_.append(info[1]) #latency
+        E_.append(info[2])
         if done:
             obs = env.reset()
             break
-
+    with lock:
+        L.append(L_)
+        E.append(E_)
 
 def analyze_validation(L,B,S,E):
     data = np.array(L)/1000
@@ -186,7 +194,7 @@ if __name__ == "__main__":
     f.close()   
    
     L_act,E_act,L_pred,E_pred,L_edrx,E_edrx = [],[],[],[],[],[]
-    for R_ in range(5):
+    for R_ in range(200): 
         records, gold = genrecord(R_,output_numbers)
         dsmap_ = dsmap[R_]
         dspmap_ = dspmap[R_]
@@ -247,7 +255,7 @@ if __name__ == "__main__":
                             
             L_edrx.extend(list(L))
             E_edrx.extend(list(E))
-
+ 
             #analyze_validation(list(L),list(B),list(S),list(E), list(T))
     #modelbufsave(L_buffer,B_buffer,S_buffer,E_buffer,T_buffer)
     datasave(L_act,L_pred,L_edrx,E_act,E_pred,E_edrx)
